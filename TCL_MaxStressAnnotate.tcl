@@ -167,10 +167,11 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
 
     mea SetVisibility true
 
-    # ── Summary note (frame name + node ID + max value) ──────────────
-    # A separate note per window; the built-in "Model Info" note is left
-    # untouched (it uses auto-updating templex fields).
-    # Remove this script's note from a previous run first.
+    # ── Summary note (angle + node ID + max value) ───────────────────
+    # Pre-existing window notes (e.g. the templex "Model Info") are kept
+    # but HIDDEN — not removed, so their scripts stay viewable in the
+    # Notes panel. Only this script's own MaxStress_* notes get removed
+    # (re-runnable).
     set staleNotes {}
     catch {
         foreach nid [clt GetNoteList] {
@@ -180,6 +181,8 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
             if {$nname eq ""} { catch {set nname [ntmp GetLabel]} }
             if {[string match "MaxStress_*" $nname]} {
                 lappend staleNotes $nid
+            } else {
+                catch {ntmp SetVisibility false}
             }
             ntmp ReleaseHandle
         }
@@ -192,7 +195,14 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
     clt GetNoteHandle note $nid            ;# handle NAME first, then id
     catch {note SetName  "MaxStress_$setName"}
     catch {note SetLabel "MaxStress_$setName"}
-    note SetText "Frame: $frameName\nNode ID: $nodeID\nMax Stress: $stressVal MPa"
+    # Compact first line: "Angle: <value>" from the CSV's CrankAngle_deg
+    # column; fall back to the full frame name if the angle wasn't parsed.
+    if {$angle ne "" && $angle ne "N/A"} {
+        set line1 "Angle: $angle"
+    } else {
+        set line1 "Frame: $frameName"
+    }
+    note SetText "$line1\nNode ID: $nodeID\nMax Stress: $stressVal MPa"
     catch {note SetScreenAnchor true}       ;# match GUI "Anchor to screen"
     if {![catch {note GetFontHandle nfont}]} {
         catch {nfont SetSize $fsize}
