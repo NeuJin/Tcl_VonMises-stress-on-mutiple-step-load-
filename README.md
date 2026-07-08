@@ -50,17 +50,41 @@ Output: Stress_Summary.csv   (one row per window × nodeset — WindowID, SetNam
 
 ## How to run
 
+### Option A — button panel (recommended)
+
+```tcl
+source /path/to/MaxStress_Panel.tcl
+```
+A floating **Max Stress Tools** panel opens with an Export section, an
+Annotate section and options (marker/note text size, marker color). To have
+the panel open automatically, launch HyperView with:
+```
+hw.exe <model_or_session> -tcl /path/to/MaxStress_Panel.tcl
+```
+
+### Option B — console scripts
+
 1. Open HyperView with your simulation result loaded.
 2. Open the Tcl console: `View → Command Window`.
 3. Source the script:
    ```tcl
-   source /path/to/TCL_StressExport.tcl
+   source /path/to/TCL_StressExport.tcl        ;# max-stress sweep → CSV
+   source /path/to/TCL_MaxStressAnnotate.tcl   ;# markers + notes from CSV
    ```
 4. Enter Selection Set IDs when prompted (space-separated):
    ```
    => Enter selection set IDs: 1 2 3 4 5 6 7 8
    ```
 5. Watch the progress bar — results export automatically to the script directory.
+
+### File layout
+
+| File | Role |
+|------|------|
+| `maxstress_lib.tcl` | All logic (procs, no UI) — sourced by everything below |
+| `MaxStress_Panel.tcl` | Floating button panel (add-in style) |
+| `TCL_StressExport.tcl` | Console wrapper: prompt → `::MaxStress::RunExport` |
+| `TCL_MaxStressAnnotate.tcl` | Console wrapper: prompt → `::MaxStress::RunAnnotate` |
 
 ---
 
