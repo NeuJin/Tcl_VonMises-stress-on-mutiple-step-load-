@@ -12,7 +12,7 @@ puts ""
 # window from that window's own CSV row.
 
 #### CLEAN UP HANDLES ####
-foreach handle {sess proj object page win clt model rctrl sub con leg iso math query vw se sys mea mtmp setc mfont} {
+foreach handle {sess proj object page win clt model rctrl sub con leg iso math query vw se sys mea mtmp setc mfont note ntmp nfont} {
     catch {${handle} ReleaseHandle}
 }
 catch {hwi CloseStack}
@@ -60,7 +60,7 @@ set FSIZE 15
 
 proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
 
-    foreach handle {win clt model rctrl mea mtmp setc mfont} {
+    foreach handle {win clt model rctrl mea mtmp setc mfont note ntmp nfont} {
         catch {${handle} ReleaseHandle}
     }
 
@@ -82,7 +82,7 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
     setc ReleaseHandle
 
     # Find this window's CSV row
-    set nodeID "" ; set simID "" ; set stressVal "" ; set angle ""
+    set nodeID "" ; set simID "" ; set stressVal "" ; set angle "" ; set frameName ""
     foreach row $csvRows {
         lassign $row rWin rSetName rNodeID rStress rSimID rAngle
         if {$rWin == $winIdx && $rSetName eq $setName} {
@@ -90,6 +90,16 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
             set stressVal $rStress
             set simID $rSimID
             set angle $rAngle
+            # SimulationLabel = 7th column (may have been split if it ever
+            # contains commas — rejoin), quoted on write; keep the part
+            # before the first colon as a compact frame name.
+            set rawLabel [string trim [join [lrange $row 6 end] ","] {"}]
+            set cpos [string first ":" $rawLabel]
+            if {$cpos > 0} {
+                set frameName [string range $rawLabel 0 [expr {$cpos - 1}]]
+            } else {
+                set frameName $rawLabel
+            }
             break
         }
     }
@@ -97,7 +107,7 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
         puts "  skip: no CSV row for window $winIdx / set '$setName'"
         return
     }
-    puts "  set '$setName' -> node $nodeID, stress $stressVal MPa, sim $simID (angle $angle)"
+    puts "  set '$setName' -> node $nodeID, stress $stressVal MPa, sim $simID (angle $angle, frame '$frameName')"
 
     # Jump to the frame the max was measured on — SimulationID indexes
     # into this window's Derived_Case_Win<idx> from the export script.
@@ -157,8 +167,42 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
     }
 
     mea SetVisibility true
+
+    # ── Summary note (frame name + node ID + max value) ──────────────
+    # A separate note per window; the built-in "Model Info" note is left
+    # untouched (it uses auto-updating templex fields).
+    # Remove this script's note from a previous run first.
+    set staleNotes {}
+    catch {
+        foreach nid [clt GetNoteList] {
+            clt GetNoteHandle ntmp $nid
+            set nname ""
+            catch {set nname [ntmp GetName]}
+            if {$nname eq ""} { catch {set nname [ntmp GetLabel]} }
+            if {[string match "MaxStress_*" $nname]} {
+                lappend staleNotes $nid
+            }
+            ntmp ReleaseHandle
+        }
+    }
+    foreach nid $staleNotes {
+        catch {clt RemoveNote $nid}
+    }
+
+    set nid [clt AddNote 0]
+    clt GetNoteHandle note $nid            ;# handle NAME first, then id
+    catch {note SetName  "MaxStress_$setName"}
+    catch {note SetLabel "MaxStress_$setName"}
+    note SetText "Frame: $frameName\nNode ID: $nodeID\nMax Stress: $stressVal MPa"
+    catch {note SetScreenAnchor true}       ;# match GUI "Anchor to screen"
+    if {![catch {note GetFontHandle nfont}]} {
+        catch {nfont SetSize $fsize}
+        catch {nfont ReleaseHandle}
+    }
+    note SetVisibility true
+
     clt Draw
-    puts "  measure 'MaxStress_$setName' created (id $mid)"
+    puts "  measure 'MaxStress_$setName' created (id $mid), note id $nid"
 }
 
 set numWindows [page GetNumberOfWindows]
