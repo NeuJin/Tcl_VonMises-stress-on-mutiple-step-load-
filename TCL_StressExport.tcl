@@ -65,7 +65,10 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
     rctrl AddSubcase $derivedCaseName
     rctrl GetSubcaseHandle sub $derivedSubcaseID
 
-    for {set sc 0} {$sc < $derivedSubcaseID} {incr sc} {
+    # Iterate the REAL subcase IDs from GetSubcaseList — IDs are not
+    # guaranteed to start at 0 or be contiguous (live run showed "subcase 0"
+    # doesn't exist, same trap as window IDs being 4 6 8... not 1 2 3...).
+    foreach sc $subcases {
         # Skip subcases created by an EARLIER window's own Derived_Case —
         # if two windows share the same underlying model, that subcase now
         # shows up in this window's list too, and HyperView rejects deriving
@@ -103,7 +106,13 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
     leg SetNumericPrecision 8
 
     #### FRAME INFO ####
-    set numFrames [expr {$derivedSubcaseID - 3}]
+    # Count frames from what was ACTUALLY appended into the derived case,
+    # not from derivedSubcaseID arithmetic — with shared models each window
+    # adds one more Derived_Case_Win* to the subcase list, so the old
+    # "derivedSubcaseID - 3" grew every window (16, 19, ... frames) and the
+    # later windows would sweep past the real end of the data.
+    set derivedSimList [rctrl GetDerivedSimulationList $derivedSubcaseID]
+    set numFrames [llength $derivedSimList]
     set subLabel [rctrl GetSubcaseLabel $derivedSubcaseID]
     puts "Subcase name:                     $subLabel"
     puts "Total frames in derived subcase:  $numFrames"
@@ -153,8 +162,6 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
     ttk::progressbar .status.p -length 320 -mode determinate -maximum $numFrames -value 0
     pack .status.l -pady 5
     pack .status.p -padx 10 -pady 8
-
-    set derivedSimList [rctrl GetDerivedSimulationList $derivedSubcaseID]
 
     for {set frameIdx 1} {$frameIdx <= $numFrames} {incr frameIdx} {
 
