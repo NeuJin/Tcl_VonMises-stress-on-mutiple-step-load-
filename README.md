@@ -18,15 +18,21 @@ For each component spec: switch frame → drag-select region → query max stres
 
 ## What it does
 
-- Creates a Derived Load Case combining all simulation steps automatically
+- **Loops over every window on the active page** (not just the active one) —
+  each window gets its own Derived Load Case + frame sweep, since separate
+  windows can hold independent models/result files (e.g. an 8-up crank-angle
+  comparison layout)
+- Creates a Derived Load Case combining all simulation steps automatically, per window
 - Loops through all crank angle frames with a real-time Tkinter progress bar
-- For each frame: queries Von Mises stress on every nodeset, tracks peak value + node ID + crank angle label
-- Exports per-frame CSV files + final summary
+- For each frame: queries Von Mises stress on every nodeset, tracks peak value + node ID + **simulation index** + crank angle label
+- Exports per-frame CSV files (one subfolder per window) + one clean cross-window summary CSV
 
 ```
-Input:  Selection Set IDs (space-separated, entered at runtime)
-Output: Stress_Frame001.csv ... Stress_FrameNNN.csv  (per crank angle)
-        Stress_Summary.csv                            (peak per nodeset)
+Input:  Selection Set IDs (space-separated, entered once, applied to every window)
+Output: Win<id>/Stress_Frame001.csv ... Stress_FrameNNN.csv  (per crank angle, per window)
+        Stress_Summary.csv   (one row per window × nodeset — WindowID, SetName,
+                               MaxNodeID, MaxStressValue_MPa, SimulationID,
+                               CrankAngle_deg, SimulationLabel)
 ```
 
 ---
