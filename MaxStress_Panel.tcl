@@ -82,6 +82,69 @@ proc ::MaxStressPanel::DoAnnotate {} {
     }
 }
 
+# Row selected -> copy its Node ID + Angle into the edit fields
+proc ::MaxStressPanel::OnSelect {} {
+    variable W
+    set sel [$W.res.tv selection]
+    if {[llength $sel] == 0} { return }
+    set vals [$W.res.tv item [lindex $sel 0] -values]
+    lassign $vals rWin rSet rNode rStress rAngle
+    $W.res.node delete 0 end ; $W.res.node insert 0 $rNode
+    $W.res.ang  delete 0 end ; $W.res.ang  insert 0 $rAngle
+}
+
+# Re-query the stress value for the selected row using the edited
+# Node ID + Angle, then update the table row and the CSV.
+proc ::MaxStressPanel::DoRequery {} {
+    variable W
+    set sel [$W.res.tv selection]
+    if {[llength $sel] == 0} {
+        SetStatus "Select a row in the table first." red
+        return
+    }
+    set item [lindex $sel 0]
+    lassign [$W.res.tv item $item -values] rWin rSet oldNode oldStress oldAngle
+    set newNode  [string trim [$W.res.node get]]
+    set newAngle [string trim [$W.res.ang get]]
+    if {$newNode eq "" || $newAngle eq ""} {
+        SetStatus "Enter Node ID and Angle first." red
+        return
+    }
+    SetStatus "Re-querying win $rWin node $newNode @ $newAngle ..." blue
+    if {[catch {::MaxStress::QueryNodeValue $rWin $newNode $newAngle} result]} {
+        SetStatus "Re-query FAILED: $result" red
+        return
+    }
+    lassign $result val simIdx simLabel angleStr
+    set stress3 [format "%.3f" $val]
+    $W.res.tv item $item -values [list $rWin $rSet $newNode $stress3 $angleStr]
+    UpdateCsvRow $rWin $rSet $newNode $val $simIdx $angleStr $simLabel
+    SetStatus "Win $rWin / $rSet -> node $newNode @ $angleStr = $stress3 MPa (CSV updated)" darkgreen
+}
+
+# Rewrite the matching (WindowID,SetName) row in Stress_Summary.csv
+proc ::MaxStressPanel::UpdateCsvRow {rWin rSet nodeID val simIdx angleStr simLabel} {
+    set csvFile [file join $::MaxStress::LIB_DIR "Stress_Summary.csv"]
+    if {![file exists $csvFile]} { return }
+    set f [open $csvFile r]
+    set lines {}
+    while {[gets $f line] >= 0} { lappend lines $line }
+    close $f
+
+    set out {}
+    foreach line $lines {
+        set fields [split $line ","]
+        if {[llength $fields] >= 6 && [lindex $fields 0] == $rWin && [lindex $fields 1] eq $rSet} {
+            lappend out "$rWin,$rSet,$nodeID,[format "%.8f" $val],$simIdx,$angleStr,\"$simLabel\""
+        } else {
+            lappend out $line
+        }
+    }
+    set f [open $csvFile w]
+    foreach line $out { puts $f $line }
+    close $f
+}
+
 proc ::MaxStressPanel::Build {} {
     variable W
 
@@ -143,11 +206,28 @@ proc ::MaxStressPanel::Build {} {
     $W.res.tv column angle  -width 90  -anchor center
     scrollbar $W.res.sb -orient vertical -command [list $W.res.tv yview]
     button $W.res.refresh -text "Refresh from CSV" -command ::MaxStressPanel::LoadResults
+
+    # Edit row: pick a row, adjust Node ID / Angle, re-query the value
+    frame $W.res.edit
+    label  $W.res.edit.l1 -text "Node ID:"
+    entry  $W.res.node -width 12
+    label  $W.res.edit.l2 -text "Angle:"
+    entry  $W.res.ang -width 12
+    button $W.res.requery -text "Re-query Value" -command ::MaxStressPanel::DoRequery
+
     grid $W.res.tv      -row 0 -column 0 -sticky nswe
     grid $W.res.sb      -row 0 -column 1 -sticky ns
-    grid $W.res.refresh -row 1 -column 0 -sticky w -pady {4 0}
+    grid $W.res.edit    -row 1 -column 0 -sticky w -pady {4 0}
+    pack $W.res.edit.l1 -in $W.res.edit -side left
+    pack $W.res.node    -in $W.res.edit -side left -padx {4 10}
+    pack $W.res.edit.l2 -in $W.res.edit -side left
+    pack $W.res.ang     -in $W.res.edit -side left -padx {4 10}
+    pack $W.res.requery -in $W.res.edit -side left
+    grid $W.res.refresh -row 2 -column 0 -sticky w -pady {4 0}
     grid columnconfigure $W.res 0 -weight 1
     pack $W.res -fill both -expand 1 -padx 10 -pady 4
+
+    bind $W.res.tv <<TreeviewSelect>> ::MaxStressPanel::OnSelect
 
     # ── Status bar ──
     label $W.status -text "Ready." -anchor w -relief sunken -padx 6

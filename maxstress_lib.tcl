@@ -11,6 +11,28 @@ namespace eval ::MaxStress {
     variable LIB_DIR       [file dirname [file normalize [info script]]]
 }
 
+# Crank angle from a simulation label like "Step10_Combustion/Angle_1454.99deg:"
+# -> "1454.99deg" (substring between the 2nd underscore and the first colon).
+proc ::MaxStress::ExtractAngle {simLabel} {
+    set pos0 [string first "_" $simLabel]
+    set pos1 [string first "_" $simLabel [expr {$pos0 + 1}]]
+    set pos2 [string first ":" $simLabel]
+    if {$pos1 >= 0 && $pos2 > $pos1} {
+        return [string range $simLabel [expr {$pos1 + 1}] [expr {$pos2 - 1}]]
+    }
+    return "N/A"
+}
+
+# Angle comparison tolerant to formatting: "1454.99deg" == "1454.99" == 1454.99
+proc ::MaxStress::AngleMatches {a b} {
+    if {[string equal -nocase [string trim $a] [string trim $b]]} { return 1 }
+    set na "" ; set nb ""
+    regexp {[-+]?[0-9]*\.?[0-9]+} $a na
+    regexp {[-+]?[0-9]*\.?[0-9]+} $b nb
+    if {$na eq "" || $nb eq ""} { return 0 }
+    return [expr {abs($na - $nb) < 0.01}]
+}
+
 proc ::MaxStress::CleanHandles {} {
     foreach handle {sess proj object page win clt model rctrl sub con leg iso math query vw se sys mea mtmp setc setz mfont note ntmp nfont iter} {
         catch {${handle} ReleaseHandle}
@@ -181,16 +203,7 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
         setc ReleaseHandle
 
         set simLabel $maxSimLabel($setID)
-
-        # Crank angle from "..._Angle_<value>deg...:" — falls back to N/A
-        # instead of dropping the row.
-        set angle "N/A"
-        set pos0 [string first "_" $simLabel]
-        set pos1 [string first "_" $simLabel [expr {$pos0 + 1}]]
-        set pos2 [string first ":" $simLabel]
-        if {$pos1 >= 0 && $pos2 > $pos1} {
-            set angle [string range $simLabel [expr {$pos1 + 1}] [expr {$pos2 - 1}]]
-        }
+        set angle [ExtractAngle $simLabel]
 
         set formattedMax [format "%.8f" $maxStress($setID)]
         lappend summaryRows [list $winID $setName $maxNodeID($setID) $formattedMax \
@@ -243,6 +256,121 @@ proc ::MaxStress::RunExport {selectionSets {outputDir ""}} {
     puts "-------------------------------------"
     catch {hwi CloseStack}
     return $summaryFileName
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# RE-QUERY — contour value for ONE node at ONE crank angle in ONE window
+# (used by the panel's editable results table). Requires the
+# Derived_Case_Win<idx> from the export to still exist (same session).
+# Returns {stressValue simIdx simLabel angleString}.
+# ─────────────────────────────────────────────────────────────────────
+
+proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
+    CleanHandles
+    OpenChain
+
+    catch {page SetActiveWindow $winIdx}
+    page GetWindowHandle win $winIdx
+    win GetClientHandle clt
+    set modelID [clt GetActiveModel]
+    clt GetModelHandle model $modelID
+    model GetResultCtrlHandle rctrl
+
+    # Locate this window's derived case from the export run
+    set derivedID ""
+    foreach sc [rctrl GetSubcaseList model] {
+        if {[rctrl GetSubcaseLabel $sc] eq "Derived_Case_Win${winIdx}"} {
+            set derivedID $sc
+            break
+        }
+    }
+    if {$derivedID eq ""} {
+        catch {hwi CloseStack}
+        error "Derived_Case_Win${winIdx} not found — run Export first (same session)"
+    }
+
+    # Angle -> simulation index (tolerant match on the numeric part)
+    set simList [rctrl GetDerivedSimulationList $derivedID]
+    set simIdx -1 ; set simLabel ""
+    set i 0
+    foreach lbl $simList {
+        if {[AngleMatches [ExtractAngle $lbl] $angle]} {
+            set simIdx $i
+            set simLabel $lbl
+            break
+        }
+        incr i
+    }
+    if {$simIdx < 0} {
+        set avail {}
+        foreach lbl $simList { lappend avail [ExtractAngle $lbl] }
+        catch {hwi CloseStack}
+        error "angle '$angle' not found in window $winIdx — available: $avail"
+    }
+
+    rctrl SetCurrentSubcase $derivedID
+    rctrl SetCurrentSimulation $simIdx
+
+    # Contour must be the stress contour for contour.value to resolve
+    rctrl GetContourCtrlHandle con
+    con SetDataType {S-Stress components}
+    con SetDataComponent Mises
+    con SetAverageMode simple
+    con SetCornerDataEnabled true
+    con SetEnableState true
+    catch {
+        page GetAnimatorHandle _anim
+        _anim SetCurrentStep [_anim GetCurrentStep]
+        _anim ReleaseHandle
+    }
+    catch {clt SetDisplayOptions "contour" true}
+    clt Draw
+
+    # Temp single-node selection set (query needs a set)
+    set tid [model AddSelectionSet node]
+    model GetSelectionSetHandle _ts $tid
+    _ts Add "id == $nodeID"
+    set sz 0
+    catch {set sz [_ts GetSize]}
+    _ts ReleaseHandle
+    if {$sz == 0} {
+        catch {model RemoveSelectionSet $tid}
+        catch {hwi CloseStack}
+        error "node $nodeID not found in window $winIdx's model"
+    }
+
+    model GetQueryCtrlHandle query
+    query SetDataSourceProperty result "Simulation Step" $simIdx
+    query SetDataSourceProperty result "Model ID" $modelID
+    query SetDataSourceProperty result "Result Type" "S-Stress components"
+    query SetDataSourceProperty result "Load Case" "Derived_Case_Win${winIdx}"
+    query SetDataSourceProperty result corners true
+    query SetDataSourceProperty result complex real
+    query SetDataSourceProperty result complex_format real
+    query SetDataSourceProperty result mutiline true
+    query SetDataSourceProperty result dataformat csv
+    query SetDataSourceProperty result datatype real
+    query SetDataSourceProperty result layer all
+    query SetSelectionSet $tid
+    query SetQuery "node.id contour.value"
+    query GetQuery
+
+    set val ""
+    query GetIteratorHandle iter
+    for {iter First} {[iter Valid]} {iter Next} {
+        set data [iter GetDataList]
+        if {[lindex $data 1] ne ""} { set val [lindex $data 1] }
+    }
+    iter ReleaseHandle
+    catch {model RemoveSelectionSet $tid}
+
+    if {$val eq ""} {
+        catch {hwi CloseStack}
+        error "no contour value returned for node $nodeID at sim $simIdx (window $winIdx)"
+    }
+
+    catch {hwi CloseStack}
+    return [list $val $simIdx $simLabel [ExtractAngle $simLabel]]
 }
 
 # ─────────────────────────────────────────────────────────────────────
