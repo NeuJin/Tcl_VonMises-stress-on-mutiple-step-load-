@@ -31,8 +31,40 @@ proc ::MaxStressPanel::DoExport {} {
     if {[catch {::MaxStress::RunExport $ids} result]} {
         SetStatus "Export FAILED: $result" red
     } else {
+        LoadResults
         SetStatus "Export done -> $result" darkgreen
     }
+}
+
+# Fill the results table from Stress_Summary.csv
+# (columns: WindowID,SetName,MaxNodeID,MaxStressValue_MPa,SimulationID,CrankAngle_deg,SimulationLabel)
+proc ::MaxStressPanel::LoadResults {} {
+    variable W
+    set csvFile [file join $::MaxStress::LIB_DIR "Stress_Summary.csv"]
+
+    $W.res.tv delete [$W.res.tv children {}]
+
+    if {![file exists $csvFile]} {
+        SetStatus "No CSV yet — run Export first." red
+        return
+    }
+    set f [open $csvFile r]
+    set lineNo 0
+    set n 0
+    while {[gets $f line] >= 0} {
+        incr lineNo
+        if {$lineNo == 1} { continue }
+        if {[string trim $line] eq ""} { continue }
+        set fields [split $line ","]
+        if {[llength $fields] < 6} { continue }
+        lassign $fields rWin rSetName rNodeID rStress rSimID rAngle
+        set stress3 ""
+        catch {set stress3 [format "%.3f" $rStress]}
+        $W.res.tv insert {} end -values [list $rWin $rSetName $rNodeID $stress3 $rAngle]
+        incr n
+    }
+    close $f
+    SetStatus "Results table: $n row(s) loaded." darkgreen
 }
 
 proc ::MaxStressPanel::DoAnnotate {} {
@@ -57,7 +89,7 @@ proc ::MaxStressPanel::Build {} {
     toplevel $W
     wm title $W "Max Stress Tools — Nguyen Tan Loc"
     wm attributes $W -topmost 1
-    wm resizable $W 0 0
+    wm resizable $W 0 1     ;# vertically resizable for the results table
 
     # ── Export section ──
     labelframe $W.exp -text " 1. Max Stress Export (all windows) " -padx 8 -pady 6
@@ -95,9 +127,34 @@ proc ::MaxStressPanel::Build {} {
     grid $W.opt.color -row 1 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
     pack $W.opt -fill x -padx 10 -pady 4
 
+    # ── Results table (all windows) ──
+    labelframe $W.res -text " 3. Results — all windows " -padx 8 -pady 6
+    ttk::treeview $W.res.tv -columns {win set node stress angle} -show headings -height 9 \
+        -yscrollcommand [list $W.res.sb set]
+    $W.res.tv heading win    -text "Win"
+    $W.res.tv heading set    -text "Set"
+    $W.res.tv heading node   -text "Node ID"
+    $W.res.tv heading stress -text "Max Stress (MPa)"
+    $W.res.tv heading angle  -text "Angle"
+    $W.res.tv column win    -width 40  -anchor center
+    $W.res.tv column set    -width 80  -anchor w
+    $W.res.tv column node   -width 90  -anchor center
+    $W.res.tv column stress -width 110 -anchor e
+    $W.res.tv column angle  -width 90  -anchor center
+    scrollbar $W.res.sb -orient vertical -command [list $W.res.tv yview]
+    button $W.res.refresh -text "Refresh from CSV" -command ::MaxStressPanel::LoadResults
+    grid $W.res.tv      -row 0 -column 0 -sticky nswe
+    grid $W.res.sb      -row 0 -column 1 -sticky ns
+    grid $W.res.refresh -row 1 -column 0 -sticky w -pady {4 0}
+    grid columnconfigure $W.res 0 -weight 1
+    pack $W.res -fill both -expand 1 -padx 10 -pady 4
+
     # ── Status bar ──
     label $W.status -text "Ready." -anchor w -relief sunken -padx 6
     pack $W.status -fill x -side bottom -padx 10 -pady {4 10}
+
+    # Pre-fill the table if a CSV from a previous run exists
+    catch {LoadResults}
 }
 
 ::MaxStressPanel::Build
