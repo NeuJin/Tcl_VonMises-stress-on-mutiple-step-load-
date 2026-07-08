@@ -148,8 +148,7 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
     clt GetMeasureHandle mea $mid
     mea SetLabel "MaxStress_$setName"
     mea AddNode $nodeID
-    mea SetDisplayMode "id"     true
-    mea SetDisplayMode "scalar" true      ;# contour value at the node
+    mea SetDisplayMode "id"     true      ;# ID only — value already in the note
     mea SetColor $pink
 
     # Font size — the size method name on the font handle is not yet
