@@ -66,7 +66,17 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
     rctrl GetSubcaseHandle sub $derivedSubcaseID
 
     for {set sc 0} {$sc < $derivedSubcaseID} {incr sc} {
-        sub AppendSimulation $sc 1
+        # Skip subcases created by an EARLIER window's own Derived_Case —
+        # if two windows share the same underlying model, that subcase now
+        # shows up in this window's list too, and HyperView rejects deriving
+        # a new case from an already-derived one.
+        set scLabel [rctrl GetSubcaseLabel $sc]
+        if {[string match "Derived_Case*" $scLabel]} {
+            continue
+        }
+        if {[catch {sub AppendSimulation $sc 1} err]} {
+            puts "  WARNING window $winID: could not append subcase $sc ($scLabel) into $derivedCaseName: $err"
+        }
     }
     sub ReleaseHandle
 
@@ -261,7 +271,11 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
 }
 
 foreach winID $winIDList {
-    processWindow page $winID $selectionSets $outputDir summaryRows
+    if {[catch {processWindow page $winID $selectionSets $outputDir summaryRows} err]} {
+        puts ""
+        puts "!!!! Window $winID failed, skipping it: $err"
+        catch {destroy .status}
+    }
 }
 
 #### WRITE ONE CLEAN SUMMARY CSV ACROSS ALL WINDOWS ####
