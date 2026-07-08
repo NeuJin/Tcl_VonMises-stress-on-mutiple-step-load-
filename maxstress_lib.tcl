@@ -48,6 +48,78 @@ proc ::MaxStress::OpenChain {} {
 }
 
 # ─────────────────────────────────────────────────────────────────────
+# LOAD — set page layout, then load the SAME model file into every
+# window with a DIFFERENT result file per window.
+# ─────────────────────────────────────────────────────────────────────
+
+proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
+    if {![file exists $modelFile]} {
+        error "model file not found: $modelFile"
+    }
+    foreach rf $resultFiles {
+        if {![file exists $rf]} {
+            error "result file not found: $rf"
+        }
+    }
+    if {[llength $resultFiles] == 0} {
+        error "no result files given"
+    }
+
+    CleanHandles
+    OpenChain
+
+    # Page layout — SetLayout takes the total window count of the preset
+    # (GUI picker: 1/2/3/4/6/8/9/12/16). 4x2 -> 8. Verified by reading
+    # GetNumberOfWindows back; if the call is refused we warn but continue
+    # with however many windows the page currently has.
+    set total [expr {$cols * $rows}]
+    catch {page SetLayout $total}
+    set numWindows [page GetNumberOfWindows]
+    if {$numWindows != $total} {
+        puts "WARNING: requested layout ${cols}x${rows} ($total windows) but page has $numWindows — set the layout manually if needed"
+    }
+    puts "--- Page has $numWindows window(s); loading [llength $resultFiles] result file(s) ---"
+
+    set winIdx 1
+    foreach rf $resultFiles {
+        if {$winIdx > $numWindows} {
+            puts "WARNING: more result files than windows — '$rf' and beyond skipped"
+            break
+        }
+        puts ""
+        puts "===== Window $winIdx ====="
+        puts "  result: [file tail $rf]"
+
+        foreach handle {win clt model} {
+            catch {${handle} ReleaseHandle}
+        }
+        catch {page SetActiveWindow $winIdx}
+        page GetWindowHandle win $winIdx
+        win GetClientHandle clt
+
+        # Clear any model already in this window (re-runnable)
+        catch {
+            foreach mid [clt GetModelList] {
+                catch {clt RemoveModel $mid}
+            }
+        }
+
+        # HV14-confirmed load pattern: AddModel geometry, then attach results
+        clt AddModel $modelFile
+        clt GetModelHandle model [clt GetActiveModel]
+        model SetResult $rf
+        clt Draw
+        win ReleaseHandle
+
+        puts "  loaded OK"
+        incr winIdx
+    }
+
+    catch {hwi CloseStack}
+    return $numWindows
+}
+
+# ─────────────────────────────────────────────────────────────────────
 # EXPORT — max Von Mises sweep over every window on the page
 # ─────────────────────────────────────────────────────────────────────
 

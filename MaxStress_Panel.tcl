@@ -12,12 +12,99 @@ package require Tk
 
 namespace eval ::MaxStressPanel {
     variable W .maxstressPanel
+    variable CONFIG [file join $::MaxStress::LIB_DIR "maxstress_config.txt"]
+}
+
+# ── Config persistence: model path, layout, result paths ──
+proc ::MaxStressPanel::SaveConfig {modelFile cols rows resultFiles} {
+    variable CONFIG
+    catch {
+        set f [open $CONFIG w]
+        puts $f $modelFile
+        puts $f "$cols $rows"
+        foreach rf $resultFiles { puts $f $rf }
+        close $f
+    }
+}
+
+# Returns {modelFile cols rows resultFiles} or "" when no config saved yet
+proc ::MaxStressPanel::LoadConfig {} {
+    variable CONFIG
+    if {![file exists $CONFIG]} { return "" }
+    set f [open $CONFIG r]
+    set lines {}
+    while {[gets $f line] >= 0} {
+        if {[string trim $line] ne ""} { lappend lines $line }
+    }
+    close $f
+    if {[llength $lines] < 3} { return "" }
+    set modelFile [lindex $lines 0]
+    lassign [lindex $lines 1] cols rows
+    set resultFiles [lrange $lines 2 end]
+    return [list $modelFile $cols $rows $resultFiles]
 }
 
 proc ::MaxStressPanel::SetStatus {msg {color black}} {
     variable W
     $W.status configure -text $msg -foreground $color
     update idletasks
+}
+
+proc ::MaxStressPanel::BrowseModel {} {
+    variable W
+    set f [tk_getOpenFile -title "Select model file" \
+        -filetypes {{"Model files" {.inp .fem .key .dyn}} {"All files" *}}]
+    if {$f ne ""} {
+        $W.load.model delete 0 end
+        $W.load.model insert 0 $f
+    }
+}
+
+proc ::MaxStressPanel::BrowseResults {} {
+    variable W
+    set files [tk_getOpenFile -title "Select result file(s)" -multiple 1 \
+        -filetypes {{"Result files" {.odb .res .op2 .h3d}} {"All files" *}}]
+    foreach f $files {
+        $W.load.res insert end "$f\n"
+    }
+}
+
+# Read the Load section fields -> {modelFile cols rows resultFiles}
+proc ::MaxStressPanel::ReadLoadFields {} {
+    variable W
+    set modelFile [string trim [$W.load.model get]]
+    set cols [string trim [$W.load.cols get]]
+    set rows [string trim [$W.load.rows get]]
+    set resultFiles {}
+    foreach line [split [$W.load.res get 1.0 end] "\n"] {
+        set line [string trim $line]
+        if {$line ne ""} { lappend resultFiles $line }
+    }
+    return [list $modelFile $cols $rows $resultFiles]
+}
+
+proc ::MaxStressPanel::DoLoadAll {} {
+    variable W
+    lassign [ReadLoadFields] modelFile cols rows resultFiles
+    if {$modelFile eq ""} {
+        SetStatus "Enter the model file path first." red
+        return
+    }
+    if {[llength $resultFiles] == 0} {
+        SetStatus "Enter at least one result file path." red
+        return
+    }
+    if {![string is integer -strict $cols] || ![string is integer -strict $rows]} {
+        SetStatus "Layout must be two integers (e.g. 4 x 2)." red
+        return
+    }
+    SetStatus "Loading [llength $resultFiles] result(s) into ${cols}x${rows} layout..." blue
+    if {[catch {::MaxStress::LoadAll $modelFile $resultFiles $cols $rows} result]} {
+        SetStatus "Load FAILED: $result" red
+    } else {
+        SaveConfig $modelFile $cols $rows $resultFiles
+        SetStatus "Loaded [llength $resultFiles] result(s) into $result window(s)." darkgreen
+    }
 }
 
 proc ::MaxStressPanel::DoExport {} {
@@ -154,6 +241,44 @@ proc ::MaxStressPanel::Build {} {
     wm attributes $W -topmost 1
     wm resizable $W 0 1     ;# vertically resizable for the results table
 
+    # ── Load section ──
+    labelframe $W.load -text " 0. Load model && results " -padx 8 -pady 6
+    label  $W.load.lm -text "Model file (shared by all windows):"
+    entry  $W.load.model -width 46
+    button $W.load.bm -text "..." -width 3 -command ::MaxStressPanel::BrowseModel
+    label  $W.load.lr -text "Result files (one per line — one window each):"
+    text   $W.load.res -width 46 -height 4 -yscrollcommand [list $W.load.rsb set]
+    scrollbar $W.load.rsb -orient vertical -command [list $W.load.res yview]
+    button $W.load.br -text "Add..." -width 6 -command ::MaxStressPanel::BrowseResults
+    frame  $W.load.lay
+    label  $W.load.lay.l -text "Layout:"
+    entry  $W.load.cols -width 3
+    label  $W.load.lay.x -text "x"
+    entry  $W.load.rows -width 3
+    label  $W.load.lay.hint -text "(ngang x doc)"
+    button $W.load.run -text "Load All" -width 14 -command ::MaxStressPanel::DoLoadAll
+
+    grid $W.load.lm    -row 0 -column 0 -columnspan 2 -sticky w
+    grid $W.load.model -row 1 -column 0 -sticky we -pady 2
+    grid $W.load.bm    -row 1 -column 1 -padx {4 0}
+    grid $W.load.lr    -row 2 -column 0 -columnspan 2 -sticky w -pady {6 0}
+    grid $W.load.res   -row 3 -column 0 -sticky we -pady 2
+    grid $W.load.rsb   -row 3 -column 1 -sticky ns
+    grid $W.load.br    -row 4 -column 0 -sticky w
+    grid $W.load.lay   -row 5 -column 0 -sticky w -pady {6 0}
+    pack $W.load.lay.l    -in $W.load.lay -side left
+    pack $W.load.cols     -in $W.load.lay -side left -padx {4 2}
+    pack $W.load.lay.x    -in $W.load.lay -side left
+    pack $W.load.rows     -in $W.load.lay -side left -padx {2 4}
+    pack $W.load.lay.hint -in $W.load.lay -side left
+    pack $W.load.run      -in $W.load.lay -side left -padx {20 0}
+    grid columnconfigure $W.load 0 -weight 1
+    pack $W.load -fill x -padx 10 -pady {10 4}
+
+    # Layout default 4 x 2
+    $W.load.cols insert 0 "4"
+    $W.load.rows insert 0 "2"
+
     # ── Export section ──
     labelframe $W.exp -text " 1. Max Stress Export (all windows) " -padx 8 -pady 6
     label  $W.exp.lbl -text "Selection set IDs (space-separated):"
@@ -235,6 +360,30 @@ proc ::MaxStressPanel::Build {} {
 
     # Pre-fill the table if a CSV from a previous run exists
     catch {LoadResults}
+
+    # ── Auto-load on open ──
+    # If a saved config exists (from the last "Load All"), prefill the Load
+    # fields and run the load automatically so opening the panel restores
+    # the whole multi-window session in one step.
+    set cfg [LoadConfig]
+    if {$cfg ne ""} {
+        lassign $cfg modelFile cols rows resultFiles
+        $W.load.model delete 0 end ; $W.load.model insert 0 $modelFile
+        $W.load.cols  delete 0 end ; $W.load.cols  insert 0 $cols
+        $W.load.rows  delete 0 end ; $W.load.rows  insert 0 $rows
+        $W.load.res   delete 1.0 end
+        foreach rf $resultFiles { $W.load.res insert end "$rf\n" }
+
+        set missing 0
+        if {![file exists $modelFile]} { set missing 1 }
+        foreach rf $resultFiles { if {![file exists $rf]} { set missing 1 } }
+        if {$missing} {
+            SetStatus "Saved paths restored — some files missing, auto-load skipped." red
+        } else {
+            SetStatus "Auto-loading saved model & results..." blue
+            after idle ::MaxStressPanel::DoLoadAll
+        }
+    }
 }
 
 ::MaxStressPanel::Build
