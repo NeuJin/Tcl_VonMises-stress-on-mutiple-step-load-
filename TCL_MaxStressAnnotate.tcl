@@ -55,10 +55,11 @@ if {$setID eq ""} {
     error "No selection set ID entered."
 }
 
-set PINK  "252 62 255"    ;# read back from the GUI-made pink measure (GetColor)
-set FSIZE 10
+set PINK       "252 62 255"  ;# read back from the GUI-made pink measure (GetColor)
+set MEA_FSIZE  15            ;# measure marker text size
+set NOTE_FSIZE 10            ;# summary note text size
 
-proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
+proc annotateWindow {pageHandle winIdx setID csvRows pink meaSize noteSize} {
 
     foreach handle {win clt model rctrl mea mtmp setc mfont note ntmp nfont} {
         catch {${handle} ReleaseHandle}
@@ -148,18 +149,20 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
     clt GetMeasureHandle mea $mid
     mea SetLabel "MaxStress_$setName"
     mea AddNode $nodeID
-    mea SetDisplayMode "id"     true      ;# ID only — value already in the note
+    # ID only — value already lives in the note. "scalar" (the contour
+    # value) defaults ON for Nodal Contour measures, so every content flag
+    # except id is switched off EXPLICITLY:
+    foreach _flag {label project mag x_comp y_comp z_comp scalar system min max node_path distance prefix} {
+        catch {mea SetDisplayMode $_flag false}
+    }
+    mea SetDisplayMode "id" true
     mea SetColor $pink
 
     # Font size — the size method name on the font handle is not yet
     # console-confirmed; try the two likely names, else print the real
     # method list so it can be fixed.
     if {![catch {mea GetFontHandle mfont}]} {
-        if {[catch {mfont SetSize $fsize}]} {
-            if {[catch {mfont SetHeight $fsize}]} {
-                puts "  WARNING: font size method unknown — font methods: [mfont ListMethods]"
-            }
-        }
+        catch {mfont SetSize $meaSize}      ;# SetSize points — console-confirmed
         catch {mfont ReleaseHandle}
     } else {
         puts "  WARNING: mea GetFontHandle failed — font size left at default"
@@ -220,7 +223,7 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
         }
     }
     if {![catch {note GetFontHandle nfont}]} {
-        catch {nfont SetSize $fsize}
+        catch {nfont SetSize $noteSize}
         catch {nfont ReleaseHandle}
     }
     note SetVisibility true
@@ -233,7 +236,7 @@ set numWindows [page GetNumberOfWindows]
 puts "--- Found $numWindows window(s) on this page ---"
 
 for {set winIdx 1} {$winIdx <= $numWindows} {incr winIdx} {
-    if {[catch {annotateWindow page $winIdx $setID $csvRows $PINK $FSIZE} err]} {
+    if {[catch {annotateWindow page $winIdx $setID $csvRows $PINK $MEA_FSIZE $NOTE_FSIZE} err]} {
         puts ""
         puts "!!!! Window $winIdx failed, skipping it: $err"
     }
