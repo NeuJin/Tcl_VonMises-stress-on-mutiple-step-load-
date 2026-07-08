@@ -56,7 +56,7 @@ if {$setID eq ""} {
 }
 
 set PINK  "252 62 255"    ;# read back from the GUI-made pink measure (GetColor)
-set FSIZE 15
+set FSIZE 10
 
 proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
 
@@ -173,6 +173,7 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
     # Notes panel. Only this script's own MaxStress_* notes get removed
     # (re-runnable).
     set staleNotes {}
+    set cornerPos ""
     catch {
         foreach nid [clt GetNoteList] {
             clt GetNoteHandle ntmp $nid
@@ -182,6 +183,11 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
             if {[string match "MaxStress_*" $nname]} {
                 lappend staleNotes $nid
             } else {
+                # Steal the built-in note's corner position for our note
+                # (it sits top-left like "Model Info"), then hide it.
+                if {$cornerPos eq ""} {
+                    catch {set cornerPos [ntmp GetPosition]}
+                }
                 catch {ntmp SetVisibility false}
             }
             ntmp ReleaseHandle
@@ -202,8 +208,17 @@ proc annotateWindow {pageHandle winIdx setID csvRows pink fsize} {
     } else {
         set line1 "Frame: $frameName"
     }
-    note SetText "$line1\nNode ID: $nodeID\nMax Stress: $stressVal MPa"
+    set stress3 [format "%.3f" $stressVal]
+    note SetText "$line1\nNode ID: $nodeID\nMax Stress: $stress3 MPa"
     catch {note SetScreenAnchor true}       ;# match GUI "Anchor to screen"
+    catch {note SetAlignment right}
+    catch {note SetBorderThickness 0}       ;# GUI "No Border"
+    if {$cornerPos ne ""} {
+        # Reuse the hidden built-in note's corner spot (default is center)
+        if {[catch {note SetPosition $cornerPos} err]} {
+            puts "  WARNING: SetPosition '$cornerPos' failed: $err"
+        }
+    }
     if {![catch {note GetFontHandle nfont}]} {
         catch {nfont SetSize $fsize}
         catch {nfont ReleaseHandle}
