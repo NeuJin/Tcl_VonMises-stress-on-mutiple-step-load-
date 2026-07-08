@@ -24,16 +24,26 @@ gets stdin userInput
 set selectionSets [split $userInput]
 
 ### ENUMERATE ALL WINDOWS ON THE PAGE ###
-set winIDList [page GetWindowIDList]
-set numWindows [llength $winIDList]
+# GetWindowHandle takes a window INDEX (1..N), NOT an ID from
+# GetWindowIDList — live run proved it: IDs were 4 6 8 10 12 14 16 18,
+# and only 4/6/8 "worked" (they happened to be valid indexes, actually
+# grabbing the 4th/6th/8th window) while 10+ failed with
+# 'invalid command name "win"'.
+set numWindows [page GetNumberOfWindows]
 puts ""
-puts "--- Found $numWindows window(s) on this page: $winIDList ---"
+puts "--- Found $numWindows window(s) on this page ---"
+
+# Subcases whose label matches any of these patterns are excluded from the
+# derived case: Derived_Case* (can't derive from an already-derived case)
+# and *Bolt* (bolt-tightening steps — not crank-angle frames; the original
+# script's "-3" arithmetic existed to exclude these).
+set skipSubcasePatterns {Derived_Case* *Bolt*}
 
 # Collected across ALL windows, written once to a single summary CSV at the end.
 # Each row: {winID setName maxNodeID maxStressValue maxSimID crankAngle simLabel}
 set summaryRows {}
 
-proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
+proc processWindow {pageHandle winID selectionSets skipPatterns summaryRowsVar} {
     upvar 1 $summaryRowsVar summaryRows
 
     # Release any leaf handles left over from a previous window's processing
@@ -44,9 +54,6 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
     $pageHandle GetWindowHandle win $winID
     win GetClientHandle clt
     clt GetModelHandle model [clt GetActiveModel]
-
-    set winOutDir "$outputDir/Win${winID}"
-    file mkdir $winOutDir
 
     puts ""
     puts "===================================================="
@@ -67,16 +74,17 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
 
     # Iterate the REAL subcase IDs from GetSubcaseList — IDs are not
     # guaranteed to start at 0 or be contiguous (live run showed "subcase 0"
-    # doesn't exist, same trap as window IDs being 4 6 8... not 1 2 3...).
+    # doesn't exist, same trap as window IDs vs indexes).
     foreach sc $subcases {
-        # Skip subcases created by an EARLIER window's own Derived_Case —
-        # if two windows share the same underlying model, that subcase now
-        # shows up in this window's list too, and HyperView rejects deriving
-        # a new case from an already-derived one.
+        # Skip non-frame subcases: earlier windows' Derived_Case* (HyperView
+        # rejects deriving from an already-derived case when windows share a
+        # model) and bolt-tightening steps (*Bolt*) which aren't crank angles.
         set scLabel [rctrl GetSubcaseLabel $sc]
-        if {[string match "Derived_Case*" $scLabel]} {
-            continue
+        set skip 0
+        foreach pat $skipPatterns {
+            if {[string match $pat $scLabel]} { set skip 1 ; break }
         }
+        if {$skip} { continue }
         if {[catch {sub AppendSimulation $sc 1} err]} {
             puts "  WARNING window $winID: could not append subcase $sc ($scLabel) into $derivedCaseName: $err"
         }
@@ -177,26 +185,16 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
 
         set simLabel [lindex $derivedSimList $frameIdx1]
 
-        array set frameData {}
-        set maxNodes 0
-
         foreach setID $selectionSets {
-            model GetSelectionSetHandle setc $setID
-            set setName [setc GetLabel]
-            setc ReleaseHandle
-
             query SetDataSourceProperty result "Simulation Step" $frameIdx1
             query SetSelectionSet $setID
             query SetQuery "node.id contour.value"
             query GetQuery
 
             query GetIteratorHandle iter
-            set dataList {}
 
             for {iter First} {[iter Valid]} {iter Next} {
                 set data [iter GetDataList]
-                lappend dataList $data
-
                 set nodeID [lindex $data 0]
                 set stressVal [lindex $data 1]
                 if {$stressVal > $maxStress($setID)} {
@@ -207,43 +205,7 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
                 }
             }
             iter ReleaseHandle
-
-            set frameData($setID) $dataList
-            if {[llength $dataList] > $maxNodes} {
-                set maxNodes [llength $dataList]
-            }
         }
-
-        # Write CSV file for this frame
-        set frameFileName [format "%s/Stress_Frame%03d.csv" $winOutDir $frameIdx]
-        set f [open $frameFileName w+]
-
-        set header "Row"
-        foreach setID $selectionSets {
-            model GetSelectionSetHandle setz $setID
-            set setName [setz GetLabel]
-            setz ReleaseHandle
-            append header ",${setName}_NodeID,${setName}_Stress(MPa)"
-        }
-        puts $f $header
-
-        for {set i 0} {$i < $maxNodes} {incr i} {
-            set line "$i"
-            foreach setID $selectionSets {
-                set dataList $frameData($setID)
-                if {$i < [llength $dataList]} {
-                    set nodeID [lindex [lindex $dataList $i] 0]
-                    set value [lindex [lindex $dataList $i] 1]
-                    set formattedValue [format "%.8f" $value]
-                    append line ",$nodeID,$formattedValue"
-                } else {
-                    append line ",,"
-                }
-            }
-            puts $f $line
-        }
-
-        close $f
     }
 
     destroy .status
@@ -274,13 +236,13 @@ proc processWindow {pageHandle winID selectionSets outputDir summaryRowsVar} {
     }
 
     win ReleaseHandle
-    puts "--- Window $winID done. Per-frame CSVs: $winOutDir ---"
+    puts "--- Window $winID done ---"
 }
 
-foreach winID $winIDList {
-    if {[catch {processWindow page $winID $selectionSets $outputDir summaryRows} err]} {
+for {set winIdx 1} {$winIdx <= $numWindows} {incr winIdx} {
+    if {[catch {processWindow page $winIdx $selectionSets $skipSubcasePatterns summaryRows} err]} {
         puts ""
-        puts "!!!! Window $winID failed, skipping it: $err"
+        puts "!!!! Window $winIdx failed, skipping it: $err"
         catch {destroy .status}
     }
 }
