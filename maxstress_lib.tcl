@@ -8,6 +8,10 @@ namespace eval ::MaxStress {
     variable MEA_FSIZE     15             ;# measure marker text size
     variable NOTE_FSIZE    10             ;# summary note text size
     variable SHOW_NOTE     1              ;# 1 = create the summary note header, 0 = marker only
+    variable NOTE_WHITE    1              ;# 1 = white filled note (left-aligned, bordered,
+                                          ;#     leading-space text — doubles as a white pad
+                                          ;#     so the axis triad stays readable);
+                                          ;# 0 = old transparent right-aligned style
     variable DATATYPE      "S-Stress components"  ;# contour/query data type
     variable DATACOMP      "Mises"                ;# contour/query component
     variable PRECISION     3              ;# decimals for displayed values AND
@@ -705,10 +709,23 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
         set line1 "Frame: $frameName"
     }
     set stress3 [Fmt $stressVal]
-    note SetText "$line1\nNode ID: $nodeID\nMax Stress: $stress3 MPa"
+    variable NOTE_WHITE
+    if {$NOTE_WHITE} {
+        # White filled style — leading spaces pad the text off the border;
+        # the first line needs a "." before the space or HV auto-trims the
+        # leading whitespace and the indent is lost.
+        note SetText ". $line1\n Node ID: $nodeID\n Max Stress: $stress3 MPa"
+        catch {note SetAlignment left}
+        catch {note SetBorderThickness 1}
+        catch {note SetTransparency false}
+        catch {note SetBackgroundColor "255 255 255"}
+    } else {
+        note SetText "$line1\nNode ID: $nodeID\nMax Stress: $stress3 MPa"
+        catch {note SetAlignment right}
+        catch {note SetBorderThickness 0}
+        catch {note SetTransparency true}
+    }
     catch {note SetScreenAnchor true}
-    catch {note SetAlignment right}
-    catch {note SetBorderThickness 0}
     if {$cornerPos ne ""} {
         if {[catch {note SetPosition $cornerPos} err]} {
             puts "  WARNING: SetPosition '$cornerPos' failed: $err"
