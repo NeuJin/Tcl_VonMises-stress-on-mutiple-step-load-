@@ -68,16 +68,48 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
     CleanHandles
     OpenChain
 
-    # Page layout — SetLayout takes the total window count of the preset
-    # (GUI picker: 1/2/3/4/6/8/9/12/16). 4x2 -> 8. Verified by reading
-    # GetNumberOfWindows back; if the call is refused we warn but continue
-    # with however many windows the page currently has.
+    # Page layout — SetLayout takes a PRESET INDEX into the GUI layout-picker
+    # grid, NOT a window count (live run: SetLayout 8 produced a 3-window
+    # layout). Preset numbering isn't documented, so probe it: try each
+    # index, keep those whose window count matches cols*rows, then pick the
+    # right ORIENTATION (4x2 vs 2x4 both have 8 windows) by window 1's
+    # graphics width — more columns means narrower windows.
     set total [expr {$cols * $rows}]
-    catch {page SetLayout $total}
-    set numWindows [page GetNumberOfWindows]
-    if {$numWindows != $total} {
-        puts "WARNING: requested layout ${cols}x${rows} ($total windows) but page has $numWindows — set the layout manually if needed"
+    set candidates {}
+    for {set code 1} {$code <= 30} {incr code} {
+        if {[catch {page SetLayout $code}]} { continue }
+        if {[page GetNumberOfWindows] == $total} {
+            set w ""
+            catch {
+                page GetWindowHandle _lw 1
+                set w [_lw GetGraphicsWidth]
+                _lw ReleaseHandle
+            }
+            lappend candidates [list $code $w]
+            puts "  layout preset $code -> $total windows (win1 width: $w)"
+        }
     }
+    if {[llength $candidates] == 0} {
+        puts "WARNING: no layout preset gives $total windows — set the layout manually; continuing with [page GetNumberOfWindows]"
+    } else {
+        set numeric {}
+        foreach c $candidates {
+            if {[string is double -strict [lindex $c 1]]} { lappend numeric $c }
+        }
+        if {[llength $numeric] >= 2} {
+            set numeric [lsort -real -index 1 $numeric]
+            if {$cols >= $rows} {
+                set pick [lindex $numeric 0 0]      ;# narrowest win = most columns
+            } else {
+                set pick [lindex $numeric end 0]    ;# widest win = fewest columns
+            }
+        } else {
+            set pick [lindex $candidates 0 0]
+        }
+        catch {page SetLayout $pick}
+        puts "  -> using layout preset $pick for ${cols}x${rows}"
+    }
+    set numWindows [page GetNumberOfWindows]
     puts "--- Page has $numWindows window(s); loading [llength $resultFiles] result file(s) ---"
 
     set winIdx 1
