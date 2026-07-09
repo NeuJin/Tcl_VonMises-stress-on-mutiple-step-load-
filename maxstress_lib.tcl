@@ -696,7 +696,17 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
             if {[catch {uplevel #0 [list source $LEGEND_TCL]} _lerr]} {
                 puts "  WARNING: legend TCL failed: $_lerr"
             } else {
-                puts "  legend TCL applied: [file tail $LEGEND_TCL]"
+                # GUI-saved legend files only DEFINE ::post::LoadSettings
+                # {legend_handle} — call it with our legend handle name.
+                if {[llength [info procs ::post::LoadSettings]]} {
+                    if {[catch {::post::LoadSettings leg} _lerr2]} {
+                        puts "  WARNING: ::post::LoadSettings failed: $_lerr2"
+                    } else {
+                        puts "  legend TCL applied: [file tail $LEGEND_TCL] (::post::LoadSettings)"
+                    }
+                } else {
+                    puts "  legend TCL sourced: [file tail $LEGEND_TCL]"
+                }
             }
         }
     }
