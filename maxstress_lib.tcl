@@ -8,6 +8,7 @@ namespace eval ::MaxStress {
     variable MEA_FSIZE     15             ;# measure marker text size
     variable NOTE_FSIZE    10             ;# summary note text size
     variable SHOW_NOTE     1              ;# 1 = create the summary note header, 0 = marker only
+    variable SHOW_LEGEND   1              ;# legend on/off (ApplyDisplay)
     variable NOTE_WHITE    1              ;# 1 = white filled note (left-aligned, bordered,
                                           ;#     leading-space text — doubles as a white pad
                                           ;#     so the axis triad stays readable);
@@ -224,6 +225,59 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
 
     catch {hwi CloseStack}
     return $numWindows
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# DISPLAY — legend on/off + element display mode, every window,
+# every component. meshMode: meshlines ("Shaded Elements and Mesh
+# Lines") / features ("...and Feature Lines") / none ("Shaded Elements")
+# — toolbar buttons = component SetPolygonMode opaque + SetMeshMode
+# (console-confirmed mapping).
+# ─────────────────────────────────────────────────────────────────────
+
+proc ::MaxStress::ApplyDisplay {legendOn meshMode} {
+    CleanHandles
+    OpenChain
+
+    set numWindows [page GetNumberOfWindows]
+    for {set wi 1} {$wi <= $numWindows} {incr wi} {
+        if {[catch {
+            foreach handle {win clt model rctrl con leg _comp0 _ch} {
+                catch {${handle} ReleaseHandle}
+            }
+            catch {page SetActiveWindow $wi}
+            page GetWindowHandle win $wi
+            win GetClientHandle clt
+            clt GetModelHandle model [clt GetActiveModel]
+
+            # Legend visibility (both the handle and the display option)
+            catch {
+                model GetResultCtrlHandle rctrl
+                rctrl GetContourCtrlHandle con
+                con GetLegendHandle leg
+                leg SetVisibility $legendOn
+            }
+            catch {clt SetDisplayOptions "legend" $legendOn}
+
+            # Element display on every component of the model
+            model GetComponentHandle _comp0 0
+            set _children [_comp0 GetChildrenList]
+            _comp0 ReleaseHandle
+            foreach cid $_children {
+                catch {
+                    model GetComponentHandle _ch $cid
+                    _ch SetPolygonMode opaque
+                    _ch SetMeshMode $meshMode
+                    _ch ReleaseHandle
+                }
+            }
+            clt Draw
+            puts "  window $wi: legend=$legendOn, mesh=$meshMode ([llength $_children] components)"
+        } err]} {
+            puts "!!!! Window $wi display apply failed: $err"
+        }
+    }
+    catch {hwi CloseStack}
 }
 
 # ─────────────────────────────────────────────────────────────────────

@@ -38,6 +38,9 @@ namespace eval ::HVTools {
     variable SF_CURITEM ""
     variable SF_CURWIN  ""
     variable SF_CURSET  ""
+    # Element-display dropdown selections
+    variable MS_ELEM "Shaded + Feature Lines"
+    variable SF_ELEM "Shaded + Feature Lines"
 }
 
 proc ::HVTools::SetStatus {msg {color black}} {
@@ -189,6 +192,35 @@ proc ::HVTools::MSFetchComps {} {
     # Keep the current component if still valid, else pick the first
     if {[lsearch -exact $comps $::MaxStress::DATACOMP] < 0} {
         set ::MaxStress::DATACOMP [lindex $comps 0]
+    }
+}
+
+# Element-display dropdown label -> component SetMeshMode value
+proc ::HVTools::ElemMode {label} {
+    switch -glob -- $label {
+        "*Mesh*"    { return meshlines }
+        "*Feature*" { return features }
+        default     { return none }
+    }
+}
+
+proc ::HVTools::MSApplyDisplay {} {
+    variable MS_ELEM
+    SetStatus "Applying display to all windows..." blue
+    if {[catch {::MaxStress::ApplyDisplay $::MaxStress::SHOW_LEGEND [ElemMode $MS_ELEM]} err]} {
+        SetStatus "Apply display FAILED: $err" red
+    } else {
+        SetStatus "Display applied (legend=$::MaxStress::SHOW_LEGEND, $MS_ELEM)." darkgreen
+    }
+}
+
+proc ::HVTools::SFApplyDisplay {} {
+    variable SF_ELEM
+    SetStatus "Applying display to all windows..." blue
+    if {[catch {::SafetyFactor::ApplyDisplay $::SafetyFactor::SHOW_LEGEND [ElemMode $SF_ELEM]} err]} {
+        SetStatus "Apply display FAILED: $err" red
+    } else {
+        SetStatus "Display applied (legend=$::SafetyFactor::SHOW_LEGEND, $SF_ELEM)." darkgreen
     }
 }
 
@@ -597,6 +629,13 @@ proc ::HVTools::BuildToolTab {tab kind} {
         grid $tab.opt.comp  -row 4 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
         grid $tab.opt.shownote  -row 5 -column 0 -columnspan 2 -sticky w -pady {4 0}
         grid $tab.opt.whitenote -row 5 -column 2 -columnspan 2 -sticky w -pady {4 0}
+        checkbutton $tab.opt.legend -text "Legend" -variable ::SafetyFactor::SHOW_LEGEND
+        ttk::combobox $tab.opt.elem -width 22 -state readonly -textvariable ::HVTools::SF_ELEM \
+            -values [list "Shaded + Mesh Lines" "Shaded + Feature Lines" "Shaded only"]
+        button $tab.opt.disp -text "Apply Display" -width 12 -command ::HVTools::SFApplyDisplay
+        grid $tab.opt.legend -row 6 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.elem   -row 6 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.disp   -row 6 -column 3 -sticky w -padx {6 0} -pady {4 0}
         bind $tab.opt.dt <<ComboboxSelected>> ::HVTools::SFFetchComps
     } else {
         grid $tab.opt.shownote  -row 2 -column 0 -columnspan 2 -sticky w -pady {4 0}
@@ -617,6 +656,13 @@ proc ::HVTools::BuildToolTab {tab kind} {
         grid $tab.opt.l8   -row 5 -column 0 -sticky w -pady {4 0}
         grid $tab.opt.comp -row 5 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
         bind $tab.opt.dt <<ComboboxSelected>> ::HVTools::MSFetchComps
+        checkbutton $tab.opt.legend -text "Legend" -variable ::MaxStress::SHOW_LEGEND
+        ttk::combobox $tab.opt.elem -width 22 -state readonly -textvariable ::HVTools::MS_ELEM \
+            -values [list "Shaded + Mesh Lines" "Shaded + Feature Lines" "Shaded only"]
+        button $tab.opt.disp -text "Apply Display" -width 12 -command ::HVTools::MSApplyDisplay
+        grid $tab.opt.legend -row 6 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.elem   -row 6 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.disp   -row 6 -column 3 -sticky w -padx {6 0} -pady {4 0}
     }
     pack $tab.opt -fill x -padx 8 -pady 4
 
