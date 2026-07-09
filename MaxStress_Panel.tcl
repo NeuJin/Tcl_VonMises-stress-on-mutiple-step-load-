@@ -313,6 +313,8 @@ proc ::MaxStressPanel::Build {} {
     grid $W.opt.note  -row 0 -column 3 -sticky w -padx {4 0}
     grid $W.opt.l3    -row 1 -column 0 -sticky w -pady {4 0}
     grid $W.opt.color -row 1 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
+    checkbutton $W.opt.shownote -text "Show note header" -variable ::MaxStress::SHOW_NOTE
+    grid $W.opt.shownote -row 2 -column 0 -columnspan 3 -sticky w -pady {4 0}
     pack $W.opt -fill x -padx 10 -pady 4
 
     # ── Results table (all windows) ──

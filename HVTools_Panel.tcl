@@ -397,6 +397,7 @@ proc ::HVTools::BuildToolTab {tab kind} {
     grid $tab.opt.note  -row 0 -column 3 -sticky w -padx {4 0}
     grid $tab.opt.l3    -row 1 -column 0 -sticky w -pady {4 0}
     grid $tab.opt.color -row 1 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
+    checkbutton $tab.opt.shownote -text "Show note header" -variable ${ns}::SHOW_NOTE
     if {$kind eq "sf"} {
         label $tab.opt.l4 -text "Load case:"
         entry $tab.opt.lc -width 5 -textvariable ::SafetyFactor::SUBCASE
@@ -406,6 +407,9 @@ proc ::HVTools::BuildToolTab {tab kind} {
         grid $tab.opt.lc -row 2 -column 1 -sticky w -padx {4 0} -pady {4 0}
         grid $tab.opt.l5 -row 3 -column 0 -sticky w -pady {4 0}
         grid $tab.opt.dt -row 3 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.shownote -row 4 -column 0 -columnspan 3 -sticky w -pady {4 0}
+    } else {
+        grid $tab.opt.shownote -row 2 -column 0 -columnspan 3 -sticky w -pady {4 0}
     }
     pack $tab.opt -fill x -padx 8 -pady 4
 

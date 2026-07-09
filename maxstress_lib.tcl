@@ -7,6 +7,7 @@ namespace eval ::MaxStress {
     variable PINK          "252 62 255"   ;# marker color (GUI read-back)
     variable MEA_FSIZE     15             ;# measure marker text size
     variable NOTE_FSIZE    10             ;# summary note text size
+    variable SHOW_NOTE     1              ;# 1 = create the summary note header, 0 = marker only
     variable SKIP_PATTERNS {Derived_Case* *Bolt*}
     # Known page-layout preset codes (page SetLayout takes a PRESET INDEX,
     # not a window count). Confirmed via GUI-click + `page GetLayout` on
@@ -602,9 +603,12 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
 
     mea SetVisibility true
 
-    # ── Summary note ──
+    # ── Summary note (toggleable via ::MaxStress::SHOW_NOTE) ──
     # Pre-existing window notes (e.g. templex "Model Info") are kept but
-    # HIDDEN; only this script's own MaxStress_* notes are removed.
+    # HIDDEN (only while our note is enabled); this script's own
+    # MaxStress_* notes are always removed first — so annotating with the
+    # toggle OFF also CLEARS old note headers.
+    variable SHOW_NOTE
     set staleNotes {}
     set cornerPos ""
     catch {
@@ -615,7 +619,7 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
             if {$nname eq ""} { catch {set nname [ntmp GetLabel]} }
             if {[string match "MaxStress_*" $nname]} {
                 lappend staleNotes $nid
-            } else {
+            } elseif {$SHOW_NOTE} {
                 if {$cornerPos eq ""} {
                     catch {set cornerPos [ntmp GetPosition]}
                 }
@@ -626,6 +630,12 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
     }
     foreach nid $staleNotes {
         catch {clt RemoveNote $nid}
+    }
+
+    if {!$SHOW_NOTE} {
+        clt Draw
+        puts "  measure 'MaxStress_$setName' created (id $mid), note header OFF"
+        return
     }
 
     set nid [clt AddNote 0]
