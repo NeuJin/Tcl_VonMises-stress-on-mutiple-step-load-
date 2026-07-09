@@ -8,6 +8,11 @@ namespace eval ::MaxStress {
     variable MEA_FSIZE     15             ;# measure marker text size
     variable NOTE_FSIZE    10             ;# summary note text size
     variable SKIP_PATTERNS {Derived_Case* *Bolt*}
+    # Known page-layout preset codes (page SetLayout takes a PRESET INDEX,
+    # not a window count). Confirmed via GUI-click + `page GetLayout` on
+    # HV14.0: 4x2 -> 19. Add more as they get measured; unknown combos fall
+    # back to the runtime probe in LoadAll.
+    variable LAYOUT_CODES  [dict create 4x2 19]
     variable LIB_DIR       [file dirname [file normalize [info script]]]
 }
 
@@ -70,11 +75,26 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
 
     # Page layout — SetLayout takes a PRESET INDEX into the GUI layout-picker
     # grid, NOT a window count (live run: SetLayout 8 produced a 3-window
-    # layout). Preset numbering isn't documented, so probe it: try each
-    # index, keep those whose window count matches cols*rows, then pick the
-    # right ORIENTATION (4x2 vs 2x4 both have 8 windows) by window 1's
-    # graphics width — more columns means narrower windows.
+    # layout). Known codes are used directly (4x2 = 19, GUI-confirmed via
+    # page GetLayout); unknown combos fall back to the probe below.
+    variable LAYOUT_CODES
     set total [expr {$cols * $rows}]
+    set applied 0
+    set key "${cols}x${rows}"
+    if {[dict exists $LAYOUT_CODES $key]} {
+        catch {page SetLayout [dict get $LAYOUT_CODES $key]}
+        if {[page GetNumberOfWindows] == $total} {
+            set applied 1
+            puts "  layout ${key} -> preset [dict get $LAYOUT_CODES $key] (known code)"
+        }
+    }
+    if {$applied} {
+        set numWindows $total
+    } else {
+    # Probe: try each index, keep those whose window count matches
+    # cols*rows, then pick the right ORIENTATION (4x2 vs 2x4 both have 8
+    # windows) by window 1's graphics width — more columns means narrower
+    # windows.
     set candidates {}
     for {set code 1} {$code <= 30} {incr code} {
         if {[catch {page SetLayout $code}]} { continue }
@@ -110,6 +130,7 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         puts "  -> using layout preset $pick for ${cols}x${rows}"
     }
     set numWindows [page GetNumberOfWindows]
+    }
     puts "--- Page has $numWindows window(s); loading [llength $resultFiles] result file(s) ---"
 
     set winIdx 1
