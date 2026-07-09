@@ -716,7 +716,7 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
         # HV auto-trims leading whitespace on line 1 (the dot anchors the
         # indent), and every line is padded to the same column so all 3
         # lines align.
-        note SetText ".         $line1\n          Node ID: $nodeID\n          MAX: $stress3 MPa"
+        note SetText ".                  $line1\n                   Node ID: $nodeID\n                   MAX: $stress3 MPa"
         catch {note SetAlignment left}
         catch {note SetBorderThickness 1}
         catch {note SetTransparency false}
