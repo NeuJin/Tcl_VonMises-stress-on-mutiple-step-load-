@@ -29,6 +29,11 @@ namespace eval ::HVTools {
     variable MS ""
     variable SF ""
     variable CONFIG [file join $::MaxStress::LIB_DIR "maxstress_config.txt"]
+    # Current selection in the per-window results grid (Max Stress tab)
+    variable MS_CURTV   ""
+    variable MS_CURITEM ""
+    variable MS_CURWIN  ""
+    variable MS_CURSET  ""
 }
 
 proc ::HVTools::SetStatus {msg {color black}} {
@@ -154,14 +159,36 @@ proc ::HVTools::MSAnnotate {} {
     }
 }
 
+# Layout cols x rows from the Load section (fallback 4x2)
+proc ::HVTools::GetLayoutCR {} {
+    variable W
+    set c 4 ; set r 2
+    catch {
+        set cc [string trim [$W.load.cols get]]
+        set rr [string trim [$W.load.rows get]]
+        if {[string is integer -strict $cc] && $cc > 0} { set c $cc }
+        if {[string is integer -strict $rr] && $rr > 0} { set r $rr }
+    }
+    return [list $c $r]
+}
+
+# Rebuild the per-window results grid (one block per window, arranged to
+# mirror the page layout) and fill it from Stress_Summary.csv.
 proc ::HVTools::MSLoadResults {} {
     variable MS
+    variable MS_CURTV ; variable MS_CURITEM ; variable MS_CURWIN ; variable MS_CURSET
     set csvFile [file join $::MaxStress::LIB_DIR "Stress_Summary.csv"]
-    $MS.res.tv delete [$MS.res.tv children {}]
+
+    foreach ch [winfo children $MS.res.grid] { destroy $ch }
+    set MS_CURTV "" ; set MS_CURITEM "" ; set MS_CURWIN "" ; set MS_CURSET ""
+
     if {![file exists $csvFile]} {
         SetStatus "No stress CSV yet — run Export first." red
         return
     }
+
+    # Read + group rows by window
+    array set winRows {}
     set f [open $csvFile r]
     set lineNo 0 ; set n 0
     while {[gets $f line] >= 0} {
@@ -172,47 +199,94 @@ proc ::HVTools::MSLoadResults {} {
         lassign $fields rWin rSetName rNodeID rStress rSimID rAngle
         set stress3 ""
         catch {set stress3 [format "%.3f" $rStress]}
-        $MS.res.tv insert {} end -values [list $rWin $rSetName $rNodeID $stress3 $rAngle]
+        lappend winRows($rWin) [list $rSetName $rNodeID $stress3 $rAngle]
         incr n
     }
     close $f
-    SetStatus "Stress results: $n row(s) loaded." darkgreen
+
+    lassign [GetLayoutCR] cols rows
+    set total [expr {$cols * $rows}]
+
+    # Mini-table height = most rows any window has (clamped 2..8)
+    set maxRows 2
+    foreach w [array names winRows] {
+        if {[llength $winRows($w)] > $maxRows} { set maxRows [llength $winRows($w)] }
+    }
+    if {$maxRows > 8} { set maxRows 8 }
+
+    for {set wi 1} {$wi <= $total} {incr wi} {
+        set rr [expr {($wi - 1) / $cols}]
+        set cc [expr {($wi - 1) % $cols}]
+        set blk $MS.res.grid.w$wi
+        labelframe $blk -text " Win $wi " -padx 2 -pady 2
+        ttk::treeview $blk.tv -columns {set node val angle} -show headings -height $maxRows
+        $blk.tv heading set   -text "Set"
+        $blk.tv heading node  -text "Node ID"
+        $blk.tv heading val   -text "Value"
+        $blk.tv heading angle -text "Angle"
+        $blk.tv column set   -width 48  -anchor w
+        $blk.tv column node  -width 72  -anchor center
+        $blk.tv column val   -width 58  -anchor e
+        $blk.tv column angle -width 66  -anchor center
+        pack $blk.tv -fill both -expand 1
+        grid $blk -row $rr -column $cc -sticky nswe -padx 2 -pady 2
+        grid columnconfigure $MS.res.grid $cc -weight 1
+        grid rowconfigure    $MS.res.grid $rr -weight 1
+
+        if {[info exists winRows($wi)]} {
+            foreach row $winRows($wi) {
+                $blk.tv insert {} end -values $row
+            }
+        }
+        bind $blk.tv <<TreeviewSelect>> [list ::HVTools::MSOnSelectBlock $wi $blk.tv]
+    }
+    SetStatus "Stress results: $n row(s) in ${cols}x${rows} grid." darkgreen
 }
 
-proc ::HVTools::MSOnSelect {} {
+# Row clicked in a window block -> remember it + fill the edit fields
+proc ::HVTools::MSOnSelectBlock {win tv} {
     variable MS
-    set sel [$MS.res.tv selection]
+    variable MS_CURTV ; variable MS_CURITEM ; variable MS_CURWIN ; variable MS_CURSET
+    set sel [$tv selection]
     if {[llength $sel] == 0} { return }
-    lassign [$MS.res.tv item [lindex $sel 0] -values] rWin rSet rNode rStress rAngle
+    set item [lindex $sel 0]
+    lassign [$tv item $item -values] rSet rNode rVal rAngle
+    set MS_CURTV $tv ; set MS_CURITEM $item ; set MS_CURWIN $win ; set MS_CURSET $rSet
     $MS.res.node delete 0 end ; $MS.res.node insert 0 $rNode
     $MS.res.ang  delete 0 end ; $MS.res.ang  insert 0 $rAngle
+    # Deselect rows in the other window blocks so the active row is unambiguous
+    foreach blk [winfo children $MS.res.grid] {
+        set otv $blk.tv
+        if {[winfo exists $otv] && $otv ne $tv} {
+            catch {$otv selection remove [$otv selection]}
+        }
+    }
+    SetStatus "Selected: Win $win / $rSet (node $rNode @ $rAngle)"
 }
 
 proc ::HVTools::MSRequery {} {
     variable MS
-    set sel [$MS.res.tv selection]
-    if {[llength $sel] == 0} {
-        SetStatus "Select a row in the table first." red
+    variable MS_CURTV ; variable MS_CURITEM ; variable MS_CURWIN ; variable MS_CURSET
+    if {$MS_CURTV eq "" || ![winfo exists $MS_CURTV]} {
+        SetStatus "Select a row in a window block first." red
         return
     }
-    set item [lindex $sel 0]
-    lassign [$MS.res.tv item $item -values] rWin rSet oldNode oldStress oldAngle
     set newNode  [string trim [$MS.res.node get]]
     set newAngle [string trim [$MS.res.ang get]]
     if {$newNode eq "" || $newAngle eq ""} {
         SetStatus "Enter Node ID and Angle first." red
         return
     }
-    SetStatus "Re-querying win $rWin node $newNode @ $newAngle ..." blue
-    if {[catch {::MaxStress::QueryNodeValue $rWin $newNode $newAngle} result]} {
+    SetStatus "Re-querying win $MS_CURWIN node $newNode @ $newAngle ..." blue
+    if {[catch {::MaxStress::QueryNodeValue $MS_CURWIN $newNode $newAngle} result]} {
         SetStatus "Re-query FAILED: $result" red
         return
     }
     lassign $result val simIdx simLabel angleStr
     set stress3 [format "%.3f" $val]
-    $MS.res.tv item $item -values [list $rWin $rSet $newNode $stress3 $angleStr]
-    MSUpdateCsv $rWin $rSet $newNode $val $simIdx $angleStr $simLabel
-    SetStatus "Win $rWin / $rSet -> node $newNode @ $angleStr = $stress3 MPa (CSV updated)" darkgreen
+    $MS_CURTV item $MS_CURITEM -values [list $MS_CURSET $newNode $stress3 $angleStr]
+    MSUpdateCsv $MS_CURWIN $MS_CURSET $newNode $val $simIdx $angleStr $simLabel
+    SetStatus "Win $MS_CURWIN / $MS_CURSET -> node $newNode @ $angleStr = $stress3 MPa (CSV updated)" darkgreen
 }
 
 proc ::HVTools::MSUpdateCsv {rWin rSet nodeID val simIdx angleStr simLabel} {
@@ -413,58 +487,63 @@ proc ::HVTools::BuildToolTab {tab kind} {
     }
     pack $tab.opt -fill x -padx 8 -pady 4
 
-    # ── Results table ──
+    # ── Results ──
     labelframe $tab.res -text " 3. Results — all windows " -padx 8 -pady 6
     if {$kind eq "ms"} {
-        ttk::treeview $tab.res.tv -columns {win set node val angle} -show headings -height 8 \
-            -yscrollcommand [list $tab.res.sb set]
-        $tab.res.tv heading val   -text "Max Stress (MPa)"
-        $tab.res.tv heading angle -text "Angle"
-        $tab.res.tv column val   -width 110 -anchor e
-        $tab.res.tv column angle -width 90  -anchor center
+        # Per-window grid mirroring the page layout; blocks are (re)built by
+        # MSLoadResults from the CSV + the Load section's cols x rows.
+        frame $tab.res.grid
+        frame  $tab.res.edit
+        label  $tab.res.edit.l1 -text "Node ID:"
+        entry  $tab.res.node -width 12
+        label  $tab.res.edit.l2 -text "Angle:"
+        entry  $tab.res.ang -width 12
+        button $tab.res.requery -text "Re-query Value" -command ::HVTools::MSRequery
+        button $tab.res.refresh -text "Refresh from CSV" -command ::HVTools::MSLoadResults
+
+        grid $tab.res.grid -row 0 -column 0 -sticky nswe
+        grid $tab.res.edit -row 1 -column 0 -sticky w -pady {4 0}
+        pack $tab.res.edit.l1 -in $tab.res.edit -side left
+        pack $tab.res.node    -in $tab.res.edit -side left -padx {4 10}
+        pack $tab.res.edit.l2 -in $tab.res.edit -side left
+        pack $tab.res.ang     -in $tab.res.edit -side left -padx {4 10}
+        pack $tab.res.requery -in $tab.res.edit -side left
+        grid $tab.res.refresh -row 2 -column 0 -sticky w -pady {4 0}
+        grid columnconfigure $tab.res 0 -weight 1
+        grid rowconfigure    $tab.res 0 -weight 1
+        pack $tab.res -fill both -expand 1 -padx 8 -pady 4
     } else {
         ttk::treeview $tab.res.tv -columns {win set node val} -show headings -height 8 \
             -yscrollcommand [list $tab.res.sb set]
         $tab.res.tv heading val -text "Min SF"
         $tab.res.tv column val -width 90 -anchor e
-    }
-    $tab.res.tv heading win  -text "Win"
-    $tab.res.tv heading set  -text "Set"
-    $tab.res.tv heading node -text "Node ID"
-    $tab.res.tv column win  -width 40  -anchor center
-    $tab.res.tv column set  -width 85  -anchor w
-    $tab.res.tv column node -width 95  -anchor center
-    scrollbar $tab.res.sb -orient vertical -command [list $tab.res.tv yview]
+        $tab.res.tv heading win  -text "Win"
+        $tab.res.tv heading set  -text "Set"
+        $tab.res.tv heading node -text "Node ID"
+        $tab.res.tv column win  -width 40  -anchor center
+        $tab.res.tv column set  -width 85  -anchor w
+        $tab.res.tv column node -width 95  -anchor center
+        scrollbar $tab.res.sb -orient vertical -command [list $tab.res.tv yview]
 
-    frame  $tab.res.edit
-    label  $tab.res.edit.l1 -text "Node ID:"
-    entry  $tab.res.node -width 12
-    if {$kind eq "ms"} {
-        label $tab.res.edit.l2 -text "Angle:"
-        entry $tab.res.ang -width 12
-    }
-    button $tab.res.requery -text "Re-query Value" \
-        -command [expr {$kind eq "ms" ? "::HVTools::MSRequery" : "::HVTools::SFRequery"}]
-    button $tab.res.refresh -text "Refresh from CSV" \
-        -command [expr {$kind eq "ms" ? "::HVTools::MSLoadResults" : "::HVTools::SFLoadResults"}]
+        frame  $tab.res.edit
+        label  $tab.res.edit.l1 -text "Node ID:"
+        entry  $tab.res.node -width 12
+        button $tab.res.requery -text "Re-query Value" -command ::HVTools::SFRequery
+        button $tab.res.refresh -text "Refresh from CSV" -command ::HVTools::SFLoadResults
 
-    grid $tab.res.tv   -row 0 -column 0 -sticky nswe
-    grid $tab.res.sb   -row 0 -column 1 -sticky ns
-    grid $tab.res.edit -row 1 -column 0 -sticky w -pady {4 0}
-    pack $tab.res.edit.l1 -in $tab.res.edit -side left
-    pack $tab.res.node    -in $tab.res.edit -side left -padx {4 10}
-    if {$kind eq "ms"} {
-        pack $tab.res.edit.l2 -in $tab.res.edit -side left
-        pack $tab.res.ang     -in $tab.res.edit -side left -padx {4 10}
-    }
-    pack $tab.res.requery -in $tab.res.edit -side left
-    grid $tab.res.refresh -row 2 -column 0 -sticky w -pady {4 0}
-    grid columnconfigure $tab.res 0 -weight 1
-    grid rowconfigure    $tab.res 0 -weight 1
-    pack $tab.res -fill both -expand 1 -padx 8 -pady 4
+        grid $tab.res.tv   -row 0 -column 0 -sticky nswe
+        grid $tab.res.sb   -row 0 -column 1 -sticky ns
+        grid $tab.res.edit -row 1 -column 0 -sticky w -pady {4 0}
+        pack $tab.res.edit.l1 -in $tab.res.edit -side left
+        pack $tab.res.node    -in $tab.res.edit -side left -padx {4 10}
+        pack $tab.res.requery -in $tab.res.edit -side left
+        grid $tab.res.refresh -row 2 -column 0 -sticky w -pady {4 0}
+        grid columnconfigure $tab.res 0 -weight 1
+        grid rowconfigure    $tab.res 0 -weight 1
+        pack $tab.res -fill both -expand 1 -padx 8 -pady 4
 
-    bind $tab.res.tv <<TreeviewSelect>> \
-        [expr {$kind eq "ms" ? "::HVTools::MSOnSelect" : "::HVTools::SFOnSelect"}]
+        bind $tab.res.tv <<TreeviewSelect>> ::HVTools::SFOnSelect
+    }
 }
 
 proc ::HVTools::Build {} {
@@ -477,7 +556,7 @@ proc ::HVTools::Build {} {
     toplevel $W
     wm title $W "HV Tools — Max Stress / Safety Factor — Nguyen Tan Loc"
     wm attributes $W -topmost 1
-    wm resizable $W 0 1
+    wm resizable $W 1 1     ;# fully resizable — the per-window results grid needs width
 
     # ── Shared Load section ──
     labelframe $W.load -text " 0. Load model & results " -padx 8 -pady 6
