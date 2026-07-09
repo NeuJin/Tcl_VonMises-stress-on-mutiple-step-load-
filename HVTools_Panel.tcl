@@ -110,6 +110,15 @@ proc ::HVTools::ReadLoadFields {} {
     return [list $modelFile $cols $rows $resultFiles]
 }
 
+proc ::HVTools::DoReset {} {
+    SetStatus "Resetting session (File > New)..." blue
+    if {[catch {::MaxStress::ResetSession} err]} {
+        SetStatus "Reset FAILED: $err" red
+    } else {
+        SetStatus "Session reset — all windows cleared. Now click Load All." darkgreen
+    }
+}
+
 proc ::HVTools::DoLoadAll {} {
     lassign [ReadLoadFields] modelFile cols rows resultFiles
     if {$modelFile eq ""} {
@@ -756,6 +765,7 @@ proc ::HVTools::Build {} {
     entry  $W.load.rows -width 3
     label  $W.load.lay.hint -text "(ngang x doc)"
     button $W.load.run -text "Load All" -width 14 -command ::HVTools::DoLoadAll
+    button $W.load.reset -text "Reset (New)" -width 11 -command ::HVTools::DoReset
 
     grid $W.load.lm    -row 0 -column 0 -columnspan 2 -sticky w
     grid $W.load.model -row 1 -column 0 -sticky we -pady 2
@@ -770,7 +780,8 @@ proc ::HVTools::Build {} {
     pack $W.load.lay.x    -in $W.load.lay -side left
     pack $W.load.rows     -in $W.load.lay -side left -padx {2 4}
     pack $W.load.lay.hint -in $W.load.lay -side left
-    pack $W.load.run      -in $W.load.lay -side left -padx {20 0}
+    pack $W.load.reset    -in $W.load.lay -side left -padx {20 0}
+    pack $W.load.run      -in $W.load.lay -side left -padx {6 0}
     grid columnconfigure $W.load 0 -weight 1
     pack $W.load -fill x -padx 10 -pady {10 4}
 

@@ -115,6 +115,21 @@ proc ::MaxStress::OpenChain {} {
 # window with a DIFFERENT result file per window.
 # ─────────────────────────────────────────────────────────────────────
 
+# Reset the whole session (File > New equivalent) — clears every window,
+# model and result. Run this before Load All when swapping result sets;
+# reloading into non-empty windows can hang on a hidden confirm dialog.
+proc ::MaxStress::ResetSession {} {
+    CleanHandles
+    hwi OpenStack
+    hwi GetSessionHandle sess
+    set r [catch {sess New} err]
+    catch {hwi CloseStack}
+    if {$r} {
+        error "sess New failed: $err"
+    }
+    puts "--- Session reset (sess New) — all windows cleared ---"
+}
+
 proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
     if {![file exists $modelFile]} {
         error "model file not found: $modelFile"
@@ -208,11 +223,29 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         page GetWindowHandle win $winIdx
         win GetClientHandle clt
 
-        # Clear any model already in this window (re-runnable)
-        catch {
-            foreach mid [clt GetModelList] {
+        # Clear any model already in this window (re-runnable). GetModelList
+        # may not exist on every HV version — fall back to popping the
+        # active model until none is left, and LOG what happened so a
+        # failed clear is visible instead of silently hanging AddModel.
+        set _mlist ""
+        catch {set _mlist [clt GetModelList]}
+        if {$_mlist ne ""} {
+            foreach mid $_mlist {
                 catch {clt RemoveModel $mid}
             }
+            puts "  cleared models (list): $_mlist"
+        } else {
+            set _prev ""
+            set _cleared 0
+            for {set _k 0} {$_k < 8} {incr _k} {
+                set _am ""
+                catch {set _am [clt GetActiveModel]}
+                if {$_am eq "" || $_am eq $_prev} { break }
+                set _prev $_am
+                if {[catch {clt RemoveModel $_am}]} { break }
+                incr _cleared
+            }
+            puts "  cleared models (fallback): $_cleared"
         }
 
         # HV14-confirmed load pattern: AddModel geometry, then attach results
