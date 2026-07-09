@@ -580,8 +580,6 @@ proc ::HVTools::BuildToolTab {tab kind} {
     grid $tab.opt.color -row 1 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
     checkbutton $tab.opt.shownote -text "Show note header" -variable ${ns}::SHOW_NOTE
     if {$kind eq "sf"} {
-        label $tab.opt.l4 -text "Load case:"
-        entry $tab.opt.lc -width 5 -textvariable ::SafetyFactor::SUBCASE
         label $tab.opt.l6 -text "Precision:"
         entry $tab.opt.prec -width 4 -textvariable ::SafetyFactor::PRECISION
         label $tab.opt.l5 -text "Data type:"
@@ -589,10 +587,8 @@ proc ::HVTools::BuildToolTab {tab kind} {
         button $tab.opt.fetch -text "Fetch lists" -width 10 -command ::HVTools::SFFetchTypes
         label $tab.opt.l8 -text "Component:"
         ttk::combobox $tab.opt.comp -width 18 -textvariable ::SafetyFactor::DATACOMP
-        grid $tab.opt.l4    -row 2 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.lc    -row 2 -column 1 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.l6    -row 2 -column 2 -sticky w -pady {4 0}
-        grid $tab.opt.prec  -row 2 -column 3 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.l6    -row 2 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.prec  -row 2 -column 1 -sticky w -padx {4 0} -pady {4 0}
         grid $tab.opt.l5    -row 3 -column 0 -sticky w -pady {4 0}
         grid $tab.opt.dt    -row 3 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
         grid $tab.opt.fetch -row 3 -column 3 -sticky w -padx {6 0} -pady {4 0}
