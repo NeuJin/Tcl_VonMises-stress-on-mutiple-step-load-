@@ -29,11 +29,15 @@ namespace eval ::HVTools {
     variable MS ""
     variable SF ""
     variable CONFIG [file join $::MaxStress::LIB_DIR "maxstress_config.txt"]
-    # Current selection in the per-window results grid (Max Stress tab)
+    # Current selection in the per-window results grids
     variable MS_CURTV   ""
     variable MS_CURITEM ""
     variable MS_CURWIN  ""
     variable MS_CURSET  ""
+    variable SF_CURTV   ""
+    variable SF_CURITEM ""
+    variable SF_CURWIN  ""
+    variable SF_CURSET  ""
 }
 
 proc ::HVTools::SetStatus {msg {color black}} {
@@ -371,14 +375,48 @@ proc ::HVTools::SFAnnotate {} {
     }
 }
 
+# Populate the SF data-type droplist from window 1's model
+proc ::HVTools::SFFetchTypes {} {
+    variable SF
+    SetStatus "Fetching data-type list from window 1..." blue
+    if {[catch {::SafetyFactor::FetchTypeList} dts] || $dts eq ""} {
+        SetStatus "Fetch failed — is a model loaded in window 1?" red
+        return
+    }
+    $SF.opt.dt configure -values $dts
+    SFFetchComps
+    SetStatus "Loaded [llength $dts] data types (component list refreshed)." darkgreen
+}
+
+proc ::HVTools::SFFetchComps {} {
+    variable SF
+    set dt $::SafetyFactor::DATATYPE
+    if {[catch {::SafetyFactor::FetchComponentList $dt} comps] || $comps eq ""} {
+        $SF.opt.comp configure -values {}
+        SetStatus "No component list for '$dt' (type one manually)." red
+        return
+    }
+    $SF.opt.comp configure -values $comps
+    if {[lsearch -exact $comps $::SafetyFactor::DATACOMP] < 0} {
+        set ::SafetyFactor::DATACOMP [lindex $comps 0]
+    }
+}
+
+# Rebuild the SF per-window results grid from SafetyFactor_Summary.csv
 proc ::HVTools::SFLoadResults {} {
     variable SF
+    variable SF_CURTV ; variable SF_CURITEM ; variable SF_CURWIN ; variable SF_CURSET
     set csvFile [file join $::SafetyFactor::LIB_DIR "SafetyFactor_Summary.csv"]
-    $SF.res.tv delete [$SF.res.tv children {}]
+
+    foreach ch [winfo children $SF.res.grid] { destroy $ch }
+    set SF_CURTV "" ; set SF_CURITEM "" ; set SF_CURWIN "" ; set SF_CURSET ""
+
     if {![file exists $csvFile]} {
         SetStatus "No SF CSV yet — run Export first." red
         return
     }
+
+    array set winRows {}
     set f [open $csvFile r]
     set lineNo 0 ; set n 0
     while {[gets $f line] >= 0} {
@@ -387,46 +425,87 @@ proc ::HVTools::SFLoadResults {} {
         set fields [split $line ","]
         if {[llength $fields] < 4} { continue }
         lassign $fields rWin rSetName rNodeID rSF
-        set sf3 ""
-        catch {set sf3 [format "%.3f" $rSF]}
-        $SF.res.tv insert {} end -values [list $rWin $rSetName $rNodeID $sf3]
+        lappend winRows($rWin) [list $rSetName $rNodeID [::SafetyFactor::Fmt $rSF]]
         incr n
     }
     close $f
-    SetStatus "SF results: $n row(s) loaded." darkgreen
+
+    lassign [GetLayoutCR] cols rows
+    set total [expr {$cols * $rows}]
+
+    set maxRows 2
+    foreach w [array names winRows] {
+        if {[llength $winRows($w)] > $maxRows} { set maxRows [llength $winRows($w)] }
+    }
+    if {$maxRows > 8} { set maxRows 8 }
+
+    for {set wi 1} {$wi <= $total} {incr wi} {
+        set rr [expr {($wi - 1) / $cols}]
+        set cc [expr {($wi - 1) % $cols}]
+        set blk $SF.res.grid.w$wi
+        labelframe $blk -text " Win $wi " -padx 2 -pady 2
+        ttk::treeview $blk.tv -columns {set node val} -show headings -height $maxRows
+        $blk.tv heading set  -text "Set"
+        $blk.tv heading node -text "Node ID"
+        $blk.tv heading val  -text "Min SF"
+        $blk.tv column set  -width 56 -anchor w
+        $blk.tv column node -width 78 -anchor center
+        $blk.tv column val  -width 62 -anchor e
+        pack $blk.tv -fill both -expand 1
+        grid $blk -row $rr -column $cc -sticky nswe -padx 2 -pady 2
+        grid columnconfigure $SF.res.grid $cc -weight 1
+        grid rowconfigure    $SF.res.grid $rr -weight 1
+
+        if {[info exists winRows($wi)]} {
+            foreach row $winRows($wi) {
+                $blk.tv insert {} end -values $row
+            }
+        }
+        bind $blk.tv <<TreeviewSelect>> [list ::HVTools::SFOnSelectBlock $wi $blk.tv]
+    }
+    SetStatus "SF results: $n row(s) in ${cols}x${rows} grid." darkgreen
 }
 
-proc ::HVTools::SFOnSelect {} {
+# Row clicked in a window block -> remember it + fill the edit field
+proc ::HVTools::SFOnSelectBlock {win tv} {
     variable SF
-    set sel [$SF.res.tv selection]
+    variable SF_CURTV ; variable SF_CURITEM ; variable SF_CURWIN ; variable SF_CURSET
+    set sel [$tv selection]
     if {[llength $sel] == 0} { return }
-    lassign [$SF.res.tv item [lindex $sel 0] -values] rWin rSet rNode rSF
+    set item [lindex $sel 0]
+    lassign [$tv item $item -values] rSet rNode rVal
+    set SF_CURTV $tv ; set SF_CURITEM $item ; set SF_CURWIN $win ; set SF_CURSET $rSet
     $SF.res.node delete 0 end ; $SF.res.node insert 0 $rNode
+    foreach blk [winfo children $SF.res.grid] {
+        set otv $blk.tv
+        if {[winfo exists $otv] && $otv ne $tv} {
+            catch {$otv selection remove [$otv selection]}
+        }
+    }
+    SetStatus "Selected: Win $win / $rSet (node $rNode)"
 }
 
 proc ::HVTools::SFRequery {} {
     variable SF
-    set sel [$SF.res.tv selection]
-    if {[llength $sel] == 0} {
-        SetStatus "Select a row in the table first." red
+    variable SF_CURTV ; variable SF_CURITEM ; variable SF_CURWIN ; variable SF_CURSET
+    if {$SF_CURTV eq "" || ![winfo exists $SF_CURTV]} {
+        SetStatus "Select a row in a window block first." red
         return
     }
-    set item [lindex $sel 0]
-    lassign [$SF.res.tv item $item -values] rWin rSet oldNode oldSF
     set newNode [string trim [$SF.res.node get]]
     if {$newNode eq ""} {
         SetStatus "Enter a Node ID first." red
         return
     }
-    SetStatus "Re-querying win $rWin node $newNode ..." blue
-    if {[catch {::SafetyFactor::QueryNodeValue $rWin $newNode} result]} {
+    SetStatus "Re-querying win $SF_CURWIN node $newNode ..." blue
+    if {[catch {::SafetyFactor::QueryNodeValue $SF_CURWIN $newNode} result]} {
         SetStatus "Re-query FAILED: $result" red
         return
     }
-    set sf3 [format "%.3f" $result]
-    $SF.res.tv item $item -values [list $rWin $rSet $newNode $sf3]
-    SFUpdateCsv $rWin $rSet $newNode $result
-    SetStatus "Win $rWin / $rSet -> node $newNode = SF $sf3 (CSV updated)" darkgreen
+    set sf3 [::SafetyFactor::Fmt $result]
+    $SF_CURTV item $SF_CURITEM -values [list $SF_CURSET $newNode $sf3]
+    SFUpdateCsv $SF_CURWIN $SF_CURSET $newNode $result
+    SetStatus "Win $SF_CURWIN / $SF_CURSET -> node $newNode = SF $sf3 (CSV updated)" darkgreen
 }
 
 proc ::HVTools::SFUpdateCsv {rWin rSet nodeID val} {
@@ -503,13 +582,24 @@ proc ::HVTools::BuildToolTab {tab kind} {
     if {$kind eq "sf"} {
         label $tab.opt.l4 -text "Load case:"
         entry $tab.opt.lc -width 5 -textvariable ::SafetyFactor::SUBCASE
+        label $tab.opt.l6 -text "Precision:"
+        entry $tab.opt.prec -width 4 -textvariable ::SafetyFactor::PRECISION
         label $tab.opt.l5 -text "Data type:"
-        entry $tab.opt.dt -width 18 -textvariable ::SafetyFactor::DATATYPE
-        grid $tab.opt.l4 -row 2 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.lc -row 2 -column 1 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.l5 -row 3 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.dt -row 3 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.shownote -row 4 -column 0 -columnspan 3 -sticky w -pady {4 0}
+        ttk::combobox $tab.opt.dt -width 26 -textvariable ::SafetyFactor::DATATYPE
+        button $tab.opt.fetch -text "Fetch lists" -width 10 -command ::HVTools::SFFetchTypes
+        label $tab.opt.l8 -text "Component:"
+        ttk::combobox $tab.opt.comp -width 18 -textvariable ::SafetyFactor::DATACOMP
+        grid $tab.opt.l4    -row 2 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.lc    -row 2 -column 1 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.l6    -row 2 -column 2 -sticky w -pady {4 0}
+        grid $tab.opt.prec  -row 2 -column 3 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.l5    -row 3 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.dt    -row 3 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.fetch -row 3 -column 3 -sticky w -padx {6 0} -pady {4 0}
+        grid $tab.opt.l8    -row 4 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.comp  -row 4 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.shownote -row 5 -column 0 -columnspan 3 -sticky w -pady {4 0}
+        bind $tab.opt.dt <<ComboboxSelected>> ::HVTools::SFFetchComps
     } else {
         grid $tab.opt.shownote -row 2 -column 0 -columnspan 3 -sticky w -pady {4 0}
         # Precision + data type / component droplists (Max Stress only)
@@ -557,26 +647,15 @@ proc ::HVTools::BuildToolTab {tab kind} {
         grid rowconfigure    $tab.res 0 -weight 1
         pack $tab.res -fill both -expand 1 -padx 8 -pady 4
     } else {
-        ttk::treeview $tab.res.tv -columns {win set node val} -show headings -height 8 \
-            -yscrollcommand [list $tab.res.sb set]
-        $tab.res.tv heading val -text "Min SF"
-        $tab.res.tv column val -width 90 -anchor e
-        $tab.res.tv heading win  -text "Win"
-        $tab.res.tv heading set  -text "Set"
-        $tab.res.tv heading node -text "Node ID"
-        $tab.res.tv column win  -width 40  -anchor center
-        $tab.res.tv column set  -width 85  -anchor w
-        $tab.res.tv column node -width 95  -anchor center
-        scrollbar $tab.res.sb -orient vertical -command [list $tab.res.tv yview]
-
+        # SF: same per-window grid as the Max Stress tab (no Angle column)
+        frame $tab.res.grid
         frame  $tab.res.edit
         label  $tab.res.edit.l1 -text "Node ID:"
         entry  $tab.res.node -width 12
         button $tab.res.requery -text "Re-query Value" -command ::HVTools::SFRequery
         button $tab.res.refresh -text "Refresh from CSV" -command ::HVTools::SFLoadResults
 
-        grid $tab.res.tv   -row 0 -column 0 -sticky nswe
-        grid $tab.res.sb   -row 0 -column 1 -sticky ns
+        grid $tab.res.grid -row 0 -column 0 -sticky nswe
         grid $tab.res.edit -row 1 -column 0 -sticky w -pady {4 0}
         pack $tab.res.edit.l1 -in $tab.res.edit -side left
         pack $tab.res.node    -in $tab.res.edit -side left -padx {4 10}
@@ -585,8 +664,6 @@ proc ::HVTools::BuildToolTab {tab kind} {
         grid columnconfigure $tab.res 0 -weight 1
         grid rowconfigure    $tab.res 0 -weight 1
         pack $tab.res -fill both -expand 1 -padx 8 -pady 4
-
-        bind $tab.res.tv <<TreeviewSelect>> ::HVTools::SFOnSelect
     }
 }
 
