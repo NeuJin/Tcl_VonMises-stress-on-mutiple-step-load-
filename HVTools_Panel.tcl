@@ -152,8 +152,7 @@ proc ::HVTools::MSExport {} {
         return
     }
     SetStatus "Max Stress export running..." blue
-    lassign [GetLayoutCR] _gcols _grows
-    if {[catch {::MaxStress::RunExport $ids "" $_gcols} result]} {
+    if {[catch {::MaxStress::RunExport $ids} result]} {
         SetStatus "Export FAILED: $result" red
     } else {
         MSLoadResults
@@ -327,6 +326,18 @@ proc ::HVTools::MSLoadResults {} {
 }
 
 # Row clicked in a window block -> remember it + fill the edit fields
+# Re-layout Stress_Summary.csv into the pivoted Stress_Report.csv
+# (pure file operation — no HyperView involved, instant)
+proc ::HVTools::MSMakeReport {} {
+    lassign [GetLayoutCR] gcols grows
+    SetStatus "Building report from CSV..." blue
+    if {[catch {::MaxStress::MakeReport "" $gcols} result]} {
+        SetStatus "Report FAILED: $result" red
+    } else {
+        SetStatus "Report -> $result" darkgreen
+    }
+}
+
 proc ::HVTools::MSOnSelectBlock {win tv} {
     variable MS
     variable MS_CURTV ; variable MS_CURITEM ; variable MS_CURWIN ; variable MS_CURSET
@@ -705,6 +716,7 @@ proc ::HVTools::BuildToolTab {tab kind} {
         entry  $tab.res.ang -width 12
         button $tab.res.requery -text "Re-query Value" -command ::HVTools::MSRequery
         button $tab.res.refresh -text "Refresh from CSV" -command ::HVTools::MSLoadResults
+        button $tab.res.report  -text "Make Report" -command ::HVTools::MSMakeReport
 
         grid $tab.res.grid -row 0 -column 0 -sticky nswe
         grid $tab.res.edit -row 1 -column 0 -sticky w -pady {4 0}
@@ -713,7 +725,10 @@ proc ::HVTools::BuildToolTab {tab kind} {
         pack $tab.res.edit.l2 -in $tab.res.edit -side left
         pack $tab.res.ang     -in $tab.res.edit -side left -padx {4 10}
         pack $tab.res.requery -in $tab.res.edit -side left
-        grid $tab.res.refresh -row 2 -column 0 -sticky w -pady {4 0}
+        frame $tab.res.btns
+        grid $tab.res.btns -row 2 -column 0 -sticky w -pady {4 0}
+        pack $tab.res.refresh -in $tab.res.btns -side left
+        pack $tab.res.report  -in $tab.res.btns -side left -padx {8 0}
         grid columnconfigure $tab.res 0 -weight 1
         grid rowconfigure    $tab.res 0 -weight 1
         pack $tab.res -fill both -expand 1 -padx 8 -pady 4

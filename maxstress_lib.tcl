@@ -510,20 +510,38 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
 
 # Pivoted report CSV shaped like the Excel master table: one column group
 # per window (Node ID | Stress | Angle), one row per set, windows banded
-# groupCols at a time (band = one row of the page layout). Column labels
-# come from the result file names saved in maxstress_config.txt when
-# available, else "Win N".
-proc ::MaxStress::WriteReport {summaryRows outputDir {groupCols 4}} {
+# groupCols at a time (band = one row of the page layout). PURE FILE
+# OPERATION — reads Stress_Summary.csv and re-lays it out; completely
+# independent from the export run (no HyperView calls at all). Column
+# labels come from the result file names saved in maxstress_config.txt
+# when available, else "Win N".
+proc ::MaxStress::MakeReport {{outputDir ""} {groupCols 4}} {
+    variable LIB_DIR
+    if {$outputDir eq ""} { set outputDir $LIB_DIR }
+    set csvFile [file join $outputDir "Stress_Summary.csv"]
+    if {![file exists $csvFile]} {
+        error "Summary CSV not found: $csvFile — run Export first."
+    }
+
     array set D {}
     set winsSeen {}
     set setsSeen {}
-    foreach row $summaryRows {
-        lassign $row w s node stressv simid angle
+    set cf [open $csvFile r]
+    set lineNo 0
+    while {[gets $cf line] >= 0} {
+        incr lineNo
+        if {$lineNo == 1 || [string trim $line] eq ""} { continue }
+        set fields [split $line ","]
+        if {[llength $fields] < 6} { continue }
+        lassign $fields w s node stressv simid angle
         set D($w,$s) [list $node $stressv $angle]
         if {[lsearch -exact $winsSeen $w] < 0} { lappend winsSeen $w }
         if {[lsearch -exact $setsSeen $s] < 0} { lappend setsSeen $s }
     }
-    if {[llength $winsSeen] == 0} { return "" }
+    close $cf
+    if {[llength $winsSeen] == 0} {
+        error "no data rows in $csvFile"
+    }
 
     # Window labels from the saved Load-All config (result file basenames)
     array set LBL {}
@@ -588,7 +606,7 @@ proc ::MaxStress::WriteReport {summaryRows outputDir {groupCols 4}} {
 }
 
 # Runs the full export. Returns the summary CSV path.
-proc ::MaxStress::RunExport {selectionSets {outputDir ""} {groupCols 4}} {
+proc ::MaxStress::RunExport {selectionSets {outputDir ""}} {
     variable SKIP_PATTERNS
     variable LIB_DIR
     if {$outputDir eq ""} { set outputDir $LIB_DIR }
@@ -621,10 +639,6 @@ proc ::MaxStress::RunExport {selectionSets {outputDir ""} {groupCols 4}} {
         puts $f "$rWin,$rSetName,$rNodeID,$rStress,$rSimID,$rAngle,\"$rSimLabel\""
     }
     close $f
-
-    # Pivoted report next to the summary (copy-paste ready for the Excel
-    # master table)
-    catch {WriteReport $summaryRows $outputDir $groupCols}
 
     puts ""
     puts "-------------------------------------"
