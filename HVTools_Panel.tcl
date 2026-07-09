@@ -159,6 +159,35 @@ proc ::HVTools::MSAnnotate {} {
     }
 }
 
+# Populate the data-type droplist from window 1's model
+proc ::HVTools::MSFetchTypes {} {
+    variable MS
+    SetStatus "Fetching data-type list from window 1..." blue
+    if {[catch {::MaxStress::FetchTypeList} dts] || $dts eq ""} {
+        SetStatus "Fetch failed — is a model loaded in window 1?" red
+        return
+    }
+    $MS.opt.dt configure -values $dts
+    MSFetchComps
+    SetStatus "Loaded [llength $dts] data types (component list refreshed)." darkgreen
+}
+
+# Populate the component droplist for the currently selected data type
+proc ::HVTools::MSFetchComps {} {
+    variable MS
+    set dt $::MaxStress::DATATYPE
+    if {[catch {::MaxStress::FetchComponentList $dt} comps] || $comps eq ""} {
+        $MS.opt.comp configure -values {}
+        SetStatus "No component list for '$dt' (type one manually)." red
+        return
+    }
+    $MS.opt.comp configure -values $comps
+    # Keep the current component if still valid, else pick the first
+    if {[lsearch -exact $comps $::MaxStress::DATACOMP] < 0} {
+        set ::MaxStress::DATACOMP [lindex $comps 0]
+    }
+}
+
 # Layout cols x rows from the Load section (fallback 4x2)
 proc ::HVTools::GetLayoutCR {} {
     variable W
@@ -197,8 +226,7 @@ proc ::HVTools::MSLoadResults {} {
         set fields [split $line ","]
         if {[llength $fields] < 6} { continue }
         lassign $fields rWin rSetName rNodeID rStress rSimID rAngle
-        set stress3 ""
-        catch {set stress3 [format "%.3f" $rStress]}
+        set stress3 [::MaxStress::Fmt $rStress]
         lappend winRows($rWin) [list $rSetName $rNodeID $stress3 $rAngle]
         incr n
     }
@@ -283,7 +311,7 @@ proc ::HVTools::MSRequery {} {
         return
     }
     lassign $result val simIdx simLabel angleStr
-    set stress3 [format "%.3f" $val]
+    set stress3 [::MaxStress::Fmt $val]
     $MS_CURTV item $MS_CURITEM -values [list $MS_CURSET $newNode $stress3 $angleStr]
     MSUpdateCsv $MS_CURWIN $MS_CURSET $newNode $val $simIdx $angleStr $simLabel
     SetStatus "Win $MS_CURWIN / $MS_CURSET -> node $newNode @ $angleStr = $stress3 MPa (CSV updated)" darkgreen
@@ -484,6 +512,22 @@ proc ::HVTools::BuildToolTab {tab kind} {
         grid $tab.opt.shownote -row 4 -column 0 -columnspan 3 -sticky w -pady {4 0}
     } else {
         grid $tab.opt.shownote -row 2 -column 0 -columnspan 3 -sticky w -pady {4 0}
+        # Precision + data type / component droplists (Max Stress only)
+        label $tab.opt.l6 -text "Precision:"
+        entry $tab.opt.prec -width 4 -textvariable ::MaxStress::PRECISION
+        grid $tab.opt.l6   -row 3 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.prec -row 3 -column 1 -sticky w -padx {4 0} -pady {4 0}
+        label $tab.opt.l7 -text "Data type:"
+        ttk::combobox $tab.opt.dt -width 26 -textvariable ::MaxStress::DATATYPE
+        button $tab.opt.fetch -text "Fetch lists" -width 10 -command ::HVTools::MSFetchTypes
+        grid $tab.opt.l7    -row 4 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.dt    -row 4 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.fetch -row 4 -column 3 -sticky w -padx {6 0} -pady {4 0}
+        label $tab.opt.l8 -text "Component:"
+        ttk::combobox $tab.opt.comp -width 18 -textvariable ::MaxStress::DATACOMP
+        grid $tab.opt.l8   -row 5 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.comp -row 5 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
+        bind $tab.opt.dt <<ComboboxSelected>> ::HVTools::MSFetchComps
     }
     pack $tab.opt -fill x -padx 8 -pady 4
 

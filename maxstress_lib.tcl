@@ -8,6 +8,10 @@ namespace eval ::MaxStress {
     variable MEA_FSIZE     15             ;# measure marker text size
     variable NOTE_FSIZE    10             ;# summary note text size
     variable SHOW_NOTE     1              ;# 1 = create the summary note header, 0 = marker only
+    variable DATATYPE      "S-Stress components"  ;# contour/query data type
+    variable DATACOMP      "Mises"                ;# contour/query component
+    variable PRECISION     3              ;# decimals for displayed values AND
+                                          ;# legend numeric precision (cap 10)
     variable SKIP_PATTERNS {Derived_Case* *Bolt*}
     # Known page-layout preset codes (page SetLayout takes a PRESET INDEX,
     # not a window count). Confirmed via GUI-click + `page GetLayout` on
@@ -15,6 +19,51 @@ namespace eval ::MaxStress {
     # back to the runtime probe in LoadAll.
     variable LAYOUT_CODES  [dict create 4x2 19]
     variable LIB_DIR       [file dirname [file normalize [info script]]]
+}
+
+# Format a value with the configured number of decimals (fallback 3)
+proc ::MaxStress::Fmt {v} {
+    variable PRECISION
+    set p $PRECISION
+    if {![string is integer -strict $p] || $p < 0 || $p > 10} { set p 3 }
+    if {[catch {set out [format "%.${p}f" $v]}]} { return $v }
+    return $out
+}
+
+# Data-type list of a window's model (for the panel droplist).
+proc ::MaxStress::FetchTypeList {{winIdx 1}} {
+    CleanHandles
+    OpenChain
+    catch {page SetActiveWindow $winIdx}
+    page GetWindowHandle win $winIdx
+    win GetClientHandle clt
+    clt GetModelHandle model [clt GetActiveModel]
+    model GetResultCtrlHandle rctrl
+    set dts ""
+    if {[catch {set dts [rctrl GetDataTypeList [rctrl GetCurrentSubcase]]}]} {
+        catch {set dts [rctrl GetDataTypeList]}
+    }
+    catch {hwi CloseStack}
+    return $dts
+}
+
+# Component list for one data type (signature not documented — try variants).
+proc ::MaxStress::FetchComponentList {dt {winIdx 1}} {
+    CleanHandles
+    OpenChain
+    catch {page SetActiveWindow $winIdx}
+    page GetWindowHandle win $winIdx
+    win GetClientHandle clt
+    clt GetModelHandle model [clt GetActiveModel]
+    model GetResultCtrlHandle rctrl
+    set comps ""
+    if {[catch {set comps [rctrl GetDataComponentList $dt]}]} {
+        if {[catch {set comps [rctrl GetDataComponentList [rctrl GetCurrentSubcase] $dt]}]} {
+            catch {set comps [rctrl GetDataComponentList $dt [rctrl GetCurrentSubcase]]}
+        }
+    }
+    catch {hwi CloseStack}
+    return $comps
 }
 
 # Crank angle from a simulation label like "Step10_Combustion/Angle_1454.99deg:"
@@ -178,6 +227,9 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
 # ─────────────────────────────────────────────────────────────────────
 
 proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns summaryRowsVar} {
+    variable DATATYPE
+    variable DATACOMP
+    variable PRECISION
     upvar 1 $summaryRowsVar summaryRows
 
     foreach handle {win clt model rctrl sub con leg iso math query vw se sys iter setc setz} {
@@ -231,13 +283,15 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
     con GetSelectionSetHandle se
     rctrl GetSystemCtrlHandle sys
 
-    con SetDataType {S-Stress components}
-    con SetDataComponent Mises
+    con SetDataType $DATATYPE
+    con SetDataComponent $DATACOMP
     con SetAverageMode simple
     con SetCornerDataEnabled true
     con SetEnableState true
     con SetAvgAcrossPartsEnable enable
-    leg SetNumericPrecision 8
+    set _prec $PRECISION
+    if {![string is integer -strict $_prec] || $_prec < 0 || $_prec > 10} { set _prec 3 }
+    leg SetNumericPrecision $_prec
 
     # Frame count = what was ACTUALLY appended (not ID arithmetic, which
     # inflates when windows share a model).
@@ -248,9 +302,9 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
     puts "Total frames in derived subcase:  $numFrames"
 
     query SetDataSourceProperty result "Model ID" 1
-    query SetDataSourceProperty result "Result Type" "S-Stress components"
+    query SetDataSourceProperty result "Result Type" $DATATYPE
     query SetDataSourceProperty result "Load Case" $derivedCaseName
-    query SetDataSourceProperty result "Component" Mises
+    query SetDataSourceProperty result "Component" $DATACOMP
     query SetDataSourceProperty result corners true
     query SetDataSourceProperty result complex real
     query SetDataSourceProperty result complex_format real
@@ -392,6 +446,8 @@ proc ::MaxStress::RunExport {selectionSets {outputDir ""}} {
 # ─────────────────────────────────────────────────────────────────────
 
 proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
+    variable DATATYPE
+    variable DATACOMP
     CleanHandles
     OpenChain
 
@@ -439,8 +495,8 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
 
     # Contour must be the stress contour for contour.value to resolve
     rctrl GetContourCtrlHandle con
-    con SetDataType {S-Stress components}
-    con SetDataComponent Mises
+    con SetDataType $DATATYPE
+    con SetDataComponent $DATACOMP
     con SetAverageMode simple
     con SetCornerDataEnabled true
     con SetEnableState true
@@ -468,7 +524,8 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
     model GetQueryCtrlHandle query
     query SetDataSourceProperty result "Simulation Step" $simIdx
     query SetDataSourceProperty result "Model ID" $modelID
-    query SetDataSourceProperty result "Result Type" "S-Stress components"
+    query SetDataSourceProperty result "Result Type" $DATATYPE
+    query SetDataSourceProperty result "Component" $DATACOMP
     query SetDataSourceProperty result "Load Case" "Derived_Case_Win${winIdx}"
     query SetDataSourceProperty result corners true
     query SetDataSourceProperty result complex real
@@ -647,7 +704,7 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
     } else {
         set line1 "Frame: $frameName"
     }
-    set stress3 [format "%.3f" $stressVal]
+    set stress3 [Fmt $stressVal]
     note SetText "$line1\nNode ID: $nodeID\nMax Stress: $stress3 MPa"
     catch {note SetScreenAnchor true}
     catch {note SetAlignment right}
