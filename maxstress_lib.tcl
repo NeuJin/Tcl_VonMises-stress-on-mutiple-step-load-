@@ -508,8 +508,87 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
     puts "--- Window $winID done ---"
 }
 
+# Pivoted report CSV shaped like the Excel master table: one column group
+# per window (Node ID | Stress | Angle), one row per set, windows banded
+# groupCols at a time (band = one row of the page layout). Column labels
+# come from the result file names saved in maxstress_config.txt when
+# available, else "Win N".
+proc ::MaxStress::WriteReport {summaryRows outputDir {groupCols 4}} {
+    array set D {}
+    set winsSeen {}
+    set setsSeen {}
+    foreach row $summaryRows {
+        lassign $row w s node stressv simid angle
+        set D($w,$s) [list $node $stressv $angle]
+        if {[lsearch -exact $winsSeen $w] < 0} { lappend winsSeen $w }
+        if {[lsearch -exact $setsSeen $s] < 0} { lappend setsSeen $s }
+    }
+    if {[llength $winsSeen] == 0} { return "" }
+
+    # Window labels from the saved Load-All config (result file basenames)
+    array set LBL {}
+    catch {
+        set cfgFile [file join $outputDir "maxstress_config.txt"]
+        if {[file exists $cfgFile]} {
+            set cf [open $cfgFile r]
+            set lines {}
+            while {[gets $cf line] >= 0} {
+                if {[string trim $line] ne ""} { lappend lines $line }
+            }
+            close $cf
+            set i 1
+            foreach rf [lrange $lines 2 end] {
+                set LBL($i) [file rootname [file tail $rf]]
+                incr i
+            }
+        }
+    }
+
+    if {$groupCols < 1} { set groupCols 4 }
+    set reportFile [file join $outputDir "Stress_Report.csv"]
+    set f [open $reportFile w]
+
+    for {set start 0} {$start < [llength $winsSeen]} {incr start $groupCols} {
+        set band [lrange $winsSeen $start [expr {$start + $groupCols - 1}]]
+
+        # Header row 1: window/case labels spanning 3 columns each
+        set h1 ""
+        foreach w $band {
+            set lbl "Win $w"
+            if {[info exists LBL($w)]} { set lbl $LBL($w) }
+            append h1 ",$lbl,,"
+        }
+        puts $f $h1
+        # Header row 2: sub-columns
+        set h2 "Set"
+        foreach w $band {
+            append h2 ",Node ID,Stress\[MPa\],Angle\[deg\]"
+        }
+        puts $f $h2
+
+        foreach s $setsSeen {
+            set line $s
+            foreach w $band {
+                if {[info exists D($w,$s)]} {
+                    lassign $D($w,$s) node stressv angle
+                    set angNum ""
+                    regexp {[-+]?[0-9]*\.?[0-9]+} $angle angNum
+                    append line ",$node,[Fmt $stressv],$angNum"
+                } else {
+                    append line ",,,"
+                }
+            }
+            puts $f $line
+        }
+        puts $f ""
+    }
+    close $f
+    puts "Report:  $reportFile"
+    return $reportFile
+}
+
 # Runs the full export. Returns the summary CSV path.
-proc ::MaxStress::RunExport {selectionSets {outputDir ""}} {
+proc ::MaxStress::RunExport {selectionSets {outputDir ""} {groupCols 4}} {
     variable SKIP_PATTERNS
     variable LIB_DIR
     if {$outputDir eq ""} { set outputDir $LIB_DIR }
@@ -542,6 +621,10 @@ proc ::MaxStress::RunExport {selectionSets {outputDir ""}} {
         puts $f "$rWin,$rSetName,$rNodeID,$rStress,$rSimID,$rAngle,\"$rSimLabel\""
     }
     close $f
+
+    # Pivoted report next to the summary (copy-paste ready for the Excel
+    # master table)
+    catch {WriteReport $summaryRows $outputDir $groupCols}
 
     puts ""
     puts "-------------------------------------"

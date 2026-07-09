@@ -152,7 +152,8 @@ proc ::HVTools::MSExport {} {
         return
     }
     SetStatus "Max Stress export running..." blue
-    if {[catch {::MaxStress::RunExport $ids} result]} {
+    lassign [GetLayoutCR] _gcols _grows
+    if {[catch {::MaxStress::RunExport $ids "" $_gcols} result]} {
         SetStatus "Export FAILED: $result" red
     } else {
         MSLoadResults
