@@ -195,6 +195,15 @@ proc ::HVTools::MSFetchComps {} {
     }
 }
 
+# Browse for the optional annotate-legend TCL (ns = ::MaxStress | ::SafetyFactor)
+proc ::HVTools::BrowseLegend {ns} {
+    set f [tk_getOpenFile -title "Select legend TCL (annotate/capture only)" \
+        -filetypes {{"TCL files" {.tcl}} {"All files" *}}]
+    if {$f ne ""} {
+        set ${ns}::LEGEND_TCL $f
+    }
+}
+
 # Element-display dropdown label -> component SetMeshMode value
 proc ::HVTools::ElemMode {label} {
     switch -glob -- $label {
@@ -567,6 +576,11 @@ proc ::HVTools::SFUpdateCsv {rWin rSet nodeID val} {
 
 proc ::HVTools::BuildToolTab {tab kind} {
     # kind = ms | sf   (ms has the Angle column/field, sf doesn't)
+    if {$kind eq "ms"} {
+        set ns ::MaxStress
+    } else {
+        set ns ::SafetyFactor
+    }
 
     # ── Export ──
     labelframe $tab.exp -text " 1. Export (all windows) " -padx 8 -pady 6
@@ -586,18 +600,20 @@ proc ::HVTools::BuildToolTab {tab kind} {
     entry  $tab.ann.id -width 12
     button $tab.ann.run -text "Annotate" -width 14 \
         -command [expr {$kind eq "ms" ? "::HVTools::MSAnnotate" : "::HVTools::SFAnnotate"}]
+    label  $tab.ann.ll -text "Legend TCL (optional — capture styling only, data untouched):"
+    entry  $tab.ann.leg -width 40 -textvariable ${ns}::LEGEND_TCL
+    button $tab.ann.bl -text "..." -width 3 -command [list ::HVTools::BrowseLegend $ns]
     grid $tab.ann.lbl -row 0 -column 0 -sticky w
     grid $tab.ann.id  -row 1 -column 0 -sticky w -pady 2
     grid $tab.ann.run -row 1 -column 1 -padx {6 0}
+    grid $tab.ann.ll  -row 2 -column 0 -columnspan 2 -sticky w -pady {6 0}
+    grid $tab.ann.leg -row 3 -column 0 -sticky we -pady 2
+    grid $tab.ann.bl  -row 3 -column 1 -padx {6 0}
+    grid columnconfigure $tab.ann 0 -weight 1
     pack $tab.ann -fill x -padx 8 -pady 4
 
     # ── Options ──
     labelframe $tab.opt -text " Options " -padx 8 -pady 6
-    if {$kind eq "ms"} {
-        set ns ::MaxStress
-    } else {
-        set ns ::SafetyFactor
-    }
     label $tab.opt.l1 -text "Marker size:"
     entry $tab.opt.mea -width 5 -textvariable ${ns}::MEA_FSIZE
     label $tab.opt.l2 -text "Note size:"
