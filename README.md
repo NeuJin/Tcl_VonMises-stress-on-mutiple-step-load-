@@ -50,6 +50,20 @@ Output: Stress_Summary.csv   (one row per window × nodeset — WindowID, SetNam
 
 ## How to run
 
+### Option A0 — combined tabbed panel (Max Stress + Safety Factor)
+
+```tcl
+source /path/to/HVTools_Panel.tcl
+```
+One panel, HyperView-style tabs: shared **0. Load model & results** section
+on top (model path + one result file per window + layout, auto-load on open
+from the saved config), then a **Max Stress** tab and a **Safety Factor**
+tab, each with its own Export / Annotate / Options / editable Results table.
+Requires `maxstress_lib.tcl` (this repo) and — for the SF tab —
+`safetyfactor_lib.tcl` copied from
+[Tcl_Safety-Factor-](https://github.com/NeuJin/Tcl_Safety-Factor-) into the
+same folder (the SF tab shows a hint and stays inert if it's missing).
+
 ### Option A — button panel (recommended)
 
 ```tcl
