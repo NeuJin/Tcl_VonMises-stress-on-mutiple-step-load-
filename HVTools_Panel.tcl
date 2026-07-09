@@ -825,11 +825,14 @@ proc ::HVTools::Build {} {
         $W.load.res   delete 1.0 end
         foreach rf $resultFiles { $W.load.res insert end "$rf\n" }
 
-        set missing 0
-        if {![file exists $modelFile]} { set missing 1 }
-        foreach rf $resultFiles { if {![file exists $rf]} { set missing 1 } }
-        if {$missing} {
-            SetStatus "Saved paths restored — some files missing, auto-load skipped." red
+        # Only a missing MODEL blocks auto-load; missing result files are
+        # logged and skipped inside LoadAll (the rest still load).
+        set anyResult 0
+        foreach rf $resultFiles { if {[file exists $rf]} { set anyResult 1 ; break } }
+        if {![file exists $modelFile]} {
+            SetStatus "Saved paths restored — model file missing, auto-load skipped." red
+        } elseif {!$anyResult} {
+            SetStatus "Saved paths restored — no result file exists, auto-load skipped." red
         } else {
             SetStatus "Auto-loading saved model & results..." blue
             after idle ::HVTools::DoLoadAll

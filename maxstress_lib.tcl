@@ -134,14 +134,24 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
     if {![file exists $modelFile]} {
         error "model file not found: $modelFile"
     }
-    foreach rf $resultFiles {
-        if {![file exists $rf]} {
-            error "result file not found: $rf"
-        }
-    }
     if {[llength $resultFiles] == 0} {
         error "no result files given"
     }
+    # Missing result files are logged and SKIPPED — the rest still load.
+    set okFiles {}
+    set nMissing 0
+    foreach rf $resultFiles {
+        if {![file exists $rf]} {
+            puts "WARNING: result file not found — skipped: $rf"
+            incr nMissing
+        } else {
+            lappend okFiles $rf
+        }
+    }
+    if {[llength $okFiles] == 0} {
+        error "none of the [llength $resultFiles] result files exist"
+    }
+    set resultFiles $okFiles
 
     CleanHandles
     OpenChain
@@ -216,6 +226,8 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         puts "===== Window $winIdx ====="
         puts "  result: [file tail $rf]"
 
+        if {[catch {
+
         foreach handle {win clt model} {
             catch {${handle} ReleaseHandle}
         }
@@ -256,7 +268,15 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         win ReleaseHandle
 
         puts "  loaded OK"
+
+        } _werr]} {
+            puts "!!!! Window $winIdx load failed — skipped: $_werr"
+        }
         incr winIdx
+    }
+    if {$nMissing > 0} {
+        puts ""
+        puts "NOTE: $nMissing result file(s) were missing and skipped (see WARNINGs above)"
     }
 
     catch {hwi CloseStack}
