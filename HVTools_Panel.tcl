@@ -831,7 +831,9 @@ proc ::HVTools::Build {} {
     catch {MSLoadResults}
     if {$HAS_SF} { catch {SFLoadResults} }
 
-    # ── Auto-load on open (saved config from the last "Load All") ──
+    # ── Restore saved paths on open (NO auto-load) ──
+    # The last "Load All" config only prefills the fields; loading is
+    # always an explicit click on "Load All".
     set cfg [LoadConfig]
     if {$cfg ne ""} {
         lassign $cfg modelFile cols rows resultFiles
@@ -840,19 +842,7 @@ proc ::HVTools::Build {} {
         $W.load.rows  delete 0 end ; $W.load.rows  insert 0 $rows
         $W.load.res   delete 1.0 end
         foreach rf $resultFiles { $W.load.res insert end "$rf\n" }
-
-        # Only a missing MODEL blocks auto-load; missing result files are
-        # logged and skipped inside LoadAll (the rest still load).
-        set anyResult 0
-        foreach rf $resultFiles { if {[file exists $rf]} { set anyResult 1 ; break } }
-        if {![file exists $modelFile]} {
-            SetStatus "Saved paths restored — model file missing, auto-load skipped." red
-        } elseif {!$anyResult} {
-            SetStatus "Saved paths restored — no result file exists, auto-load skipped." red
-        } else {
-            SetStatus "Auto-loading saved model & results..." blue
-            after idle ::HVTools::DoLoadAll
-        }
+        SetStatus "Saved paths restored — click Load All when ready."
     }
 }
 
