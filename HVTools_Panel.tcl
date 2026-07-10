@@ -710,6 +710,9 @@ proc ::HVTools::BuildToolTab {tab kind} {
         # MSLoadResults from the CSV + the Load section's cols x rows.
         frame $tab.res.grid
         frame  $tab.res.edit
+        frame  $tab.res.btns        ;# created BEFORE its packed children —
+                                     # a later-created frame stacks on top of
+                                     # earlier siblings and hides them
         label  $tab.res.edit.l1 -text "Node ID:"
         entry  $tab.res.node -width 12
         label  $tab.res.edit.l2 -text "Angle:"
@@ -725,7 +728,6 @@ proc ::HVTools::BuildToolTab {tab kind} {
         pack $tab.res.edit.l2 -in $tab.res.edit -side left
         pack $tab.res.ang     -in $tab.res.edit -side left -padx {4 10}
         pack $tab.res.requery -in $tab.res.edit -side left
-        frame $tab.res.btns
         grid $tab.res.btns -row 2 -column 0 -sticky w -pady {4 0}
         pack $tab.res.refresh -in $tab.res.btns -side left
         pack $tab.res.report  -in $tab.res.btns -side left -padx {8 0}
