@@ -674,7 +674,6 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
     foreach sc [rctrl GetSubcaseList model] {
         if {[rctrl GetSubcaseLabel $sc] eq "Derived_Case_Win${winIdx}"} {
             set derivedID $sc
-            break
         }
     }
     if {$derivedID eq ""} {
@@ -713,7 +712,9 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
     con SetEnableState true
     catch {
         page GetAnimatorHandle _anim
-        _anim SetCurrentStep [_anim GetCurrentStep]
+        if {[catch {_anim SetCurrentStep $simIdx}]} {
+            _anim SetCurrentStep [_anim GetCurrentStep]
+        }
         _anim ReleaseHandle
     }
     catch {clt SetDisplayOptions "contour" true}
@@ -823,13 +824,23 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
     foreach sc [rctrl GetSubcaseList model] {
         if {[rctrl GetSubcaseLabel $sc] eq "Derived_Case_Win${winIdx}"} {
             set derivedID $sc
-            break
         }
     }
     if {$derivedID ne ""} {
         rctrl SetCurrentSubcase $derivedID
         rctrl SetCurrentSimulation $simID
-        puts "  frame set: Derived_Case_Win${winIdx} sim $simID"
+        # ★ Sync the animator too — SetCurrentSimulation alone moves the data
+        # pointer but the viewport keeps rendering the sweep's LAST frame
+        # (e.g. step 17) even though the frame selector shows the right step.
+        catch {
+            $pageHandle GetAnimatorHandle _anim
+            if {[catch {_anim SetCurrentStep $simID}]} {
+                _anim SetCurrentStep [_anim GetCurrentStep]
+            }
+            _anim ReleaseHandle
+        }
+        clt Draw
+        puts "  frame set: Derived_Case_Win${winIdx} sim $simID (animator synced)"
     } else {
         puts "  WARNING: Derived_Case_Win${winIdx} not found (session reopened?) — frame NOT changed, value shown may differ from CSV"
     }
