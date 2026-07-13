@@ -819,30 +819,41 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
     }
     puts "  set '$setName' -> node $nodeID, stress $stressVal MPa, sim $simID (angle $angle, frame '$frameName')"
 
-    # Jump to the frame the max was measured on
-    set derivedID ""
+    # Jump to the ORIGINAL subcase whose label carries this row's angle —
+    # the frame selector then shows the real step name (e.g.
+    # "Step10_Combustion/Angle_1454.99deg:") for at-a-glance verification,
+    # instead of an anonymous Derived_Case frame.
+    set targetSC ""
     foreach sc [rctrl GetSubcaseList model] {
-        if {[rctrl GetSubcaseLabel $sc] eq "Derived_Case_Win${winIdx}"} {
-            set derivedID $sc
+        set lbl [rctrl GetSubcaseLabel $sc]
+        if {[string match "Derived_Case*" $lbl]} { continue }
+        if {[AngleMatches [ExtractAngle $lbl] $angle]} {
+            set targetSC $sc
+            break
         }
     }
-    if {$derivedID ne ""} {
-        rctrl SetCurrentSubcase $derivedID
-        rctrl SetCurrentSimulation $simID
-        # ★ Sync the animator too — SetCurrentSimulation alone moves the data
-        # pointer but the viewport keeps rendering the sweep's LAST frame
-        # (e.g. step 17) even though the frame selector shows the right step.
+    if {$targetSC ne ""} {
+        rctrl SetCurrentSubcase $targetSC
+        # The export swept simulation 1 of each subcase (AppendSimulation
+        # $sc 1) — jump to the same one; fall back to 0 for 1-sim subcases.
+        if {[catch {rctrl SetCurrentSimulation 1}]} {
+            catch {rctrl SetCurrentSimulation 0}
+        }
+        set simShow ""
+        catch {set simShow [rctrl GetCurrentSimulation]}
+        # Sync the animator — SetCurrentSimulation alone moves the data
+        # pointer but the viewport keeps rendering the last-drawn frame.
         catch {
             $pageHandle GetAnimatorHandle _anim
-            if {[catch {_anim SetCurrentStep $simID}]} {
+            if {[catch {_anim SetCurrentStep $simShow}]} {
                 _anim SetCurrentStep [_anim GetCurrentStep]
             }
             _anim ReleaseHandle
         }
         clt Draw
-        puts "  frame set: Derived_Case_Win${winIdx} sim $simID (animator synced)"
+        puts "  frame set: '[rctrl GetSubcaseLabel $targetSC]' sim $simShow (animator synced)"
     } else {
-        puts "  WARNING: Derived_Case_Win${winIdx} not found (session reopened?) — frame NOT changed, value shown may differ from CSV"
+        puts "  WARNING: no subcase label matches angle '$angle' — frame NOT changed, value shown may differ from CSV"
     }
 
     # Optional legend TCL — capture styling only. Sourced AFTER the CSV row
