@@ -774,7 +774,7 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
 
 proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize noteSize} {
 
-    foreach handle {win clt model rctrl mea mtmp setc mfont note ntmp nfont} {
+    foreach handle {win clt model rctrl con leg mea mtmp setc mfont note ntmp nfont} {
         catch {${handle} ReleaseHandle}
     }
 
