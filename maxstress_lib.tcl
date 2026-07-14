@@ -8,6 +8,9 @@ namespace eval ::MaxStress {
     variable MEA_FSIZE     15             ;# measure marker text size
     variable NOTE_FSIZE    10             ;# summary note text size
     variable SHOW_NOTE     1              ;# 1 = create the summary note header, 0 = marker only
+    variable SHOW_MEASURE  1              ;# 1 = create the node-ID marker, 0 = note only
+    variable MEA_SHOW_VALUE 0             ;# 1 = also show the value on the marker (scalar flag)
+    variable MEA_PRECISION 3              ;# decimals for the marker's own value (mea SetNumericPrecision)
     variable SHOW_LEGEND   1              ;# legend on/off (ApplyDisplay)
     variable LEGEND_TCL    ""             ;# optional legend TCL sourced per window
                                           ;# during Annotate — capture styling ONLY,
@@ -899,27 +902,42 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
         catch {clt RemoveMeasure $mid}
     }
 
-    # Create the measure marker.
-    # ⚠️ Display-mode flags: everything except id must be switched OFF
-    # explicitly — "scalar" defaults ON for Nodal Contour measures.
-    set mid [clt AddMeasure "Nodal Contour"]
-    clt GetMeasureHandle mea $mid
-    mea SetLabel "MaxStress_$setName"
-    mea AddNode $nodeID
-    foreach _flag {label project mag x_comp y_comp z_comp scalar system min max node_path distance prefix} {
-        catch {mea SetDisplayMode $_flag false}
-    }
-    mea SetDisplayMode "id" true
-    mea SetColor $pink
+    # Create the measure marker (toggleable via ::MaxStress::SHOW_MEASURE —
+    # stale MaxStress_* markers above are always cleared first, so turning
+    # this off and re-annotating also removes existing markers).
+    variable SHOW_MEASURE
+    if {$SHOW_MEASURE} {
+        # ⚠️ Display-mode flags: everything except id (and scalar, if the
+        # user opts in below) must be switched OFF explicitly — "scalar"
+        # defaults ON for Nodal Contour measures.
+        set mid [clt AddMeasure "Nodal Contour"]
+        clt GetMeasureHandle mea $mid
+        mea SetLabel "MaxStress_$setName"
+        mea AddNode $nodeID
+        foreach _flag {label project mag x_comp y_comp z_comp scalar system min max node_path distance prefix} {
+            catch {mea SetDisplayMode $_flag false}
+        }
+        mea SetDisplayMode "id" true
 
-    if {![catch {mea GetFontHandle mfont}]} {
-        catch {mfont SetSize $meaSize}      ;# SetSize points — console-confirmed
-        catch {mfont ReleaseHandle}
-    } else {
-        puts "  WARNING: mea GetFontHandle failed — font size left at default"
-    }
+        variable MEA_SHOW_VALUE
+        if {$MEA_SHOW_VALUE} {
+            mea SetDisplayMode "scalar" true
+            variable MEA_PRECISION
+            set _mp $MEA_PRECISION
+            if {![string is integer -strict $_mp] || $_mp < 0 || $_mp > 10} { set _mp 3 }
+            catch {mea SetNumericPrecision $_mp}
+        }
+        mea SetColor $pink
 
-    mea SetVisibility true
+        if {![catch {mea GetFontHandle mfont}]} {
+            catch {mfont SetSize $meaSize}      ;# SetSize points — console-confirmed
+            catch {mfont ReleaseHandle}
+        } else {
+            puts "  WARNING: mea GetFontHandle failed — font size left at default"
+        }
+
+        mea SetVisibility true
+    }
 
     # ── Summary note (toggleable via ::MaxStress::SHOW_NOTE) ──
     # Pre-existing window notes (e.g. templex "Model Info") are kept but
