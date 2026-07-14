@@ -12,10 +12,6 @@ namespace eval ::MaxStress {
     variable LEGEND_TCL    ""             ;# optional legend TCL sourced per window
                                           ;# during Annotate — capture styling ONLY,
                                           ;# never touches the CSV or results table
-    variable NOTE_WHITE    1              ;# 1 = white filled note (left-aligned, bordered,
-                                          ;#     leading-space text — doubles as a white pad
-                                          ;#     so the axis triad stays readable);
-                                          ;# 0 = old transparent right-aligned style
     variable DATATYPE      "S-Stress components"  ;# contour/query data type
     variable DATACOMP      "Mises"                ;# contour/query component
     variable PRECISION     3              ;# decimals for displayed values AND
@@ -970,57 +966,43 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
         set line1 "Frame: $frameName"
     }
     set stress3 [Fmt $stressVal]
-    variable NOTE_WHITE
-    if {$NOTE_WHITE} {
-        # White filled style. Big left padding leaves a white area for the
-        # axis triad to render on; the first line starts with "." because
-        # HV auto-trims leading whitespace on line 1 (the dot anchors the
-        # indent), and every line is padded to the same column so all 3
-        # lines align.
-        note SetText ".                      $line1\n                       Node ID: $nodeID\n                       MAX: $stress3 MPa"
-        catch {note SetAlignment left}
-        catch {note SetBorderThickness 1}
-        catch {note SetTransparency false}
-        catch {note SetBackgroundColor "255 255 255"}
-        catch {note SetTextColor "0 0 0"}   ;# HV2022 defaults to white text
-    } else {
-        note SetText "$line1\nNode ID: $nodeID\nMax Stress: $stress3 MPa"
-        catch {note SetAlignment right}
-        catch {note SetBorderThickness 0}
-        catch {note SetTransparency true}
-    }
+    # White filled style (the only style — merged with the old plain/
+    # transparent variant since white is what's actually used). Big left
+    # padding leaves a white area for the axis triad to render on; the
+    # first line starts with "." because HV auto-trims leading whitespace
+    # on line 1 (the dot anchors the indent), and every line is padded to
+    # the same column so all 3 lines align.
+    note SetText ".                      $line1\n                       Node ID: $nodeID\n                       MAX: $stress3 MPa"
+    catch {note SetAlignment left}
+    catch {note SetBorderThickness 1}
+    catch {note SetTransparency false}
+    catch {note SetBackgroundColor "255 255 255"}
+    catch {note SetTextColor "0 0 0"}   ;# HV2022 defaults to white text
     catch {note SetScreenAnchor true}
-    if {$NOTE_WHITE} {
-        # Bottom-left placement (white pad sits under the triad).
-        # SetPosition's coordinate system is undocumented — sniff it from
-        # GetPosition: values <= 1 treated as normalized (origin assumed
-        # top-left), larger as pixels sized from the window graphics area.
-        set curPos ""
-        catch {set curPos [note GetPosition]}
-        set placed 0
-        if {[llength $curPos] >= 2} {
-            lassign $curPos px py
-            if {[string is double -strict $px] && [string is double -strict $py]} {
-                if {$px <= 1.0 && $py <= 1.0} {
-                    if {![catch {note SetPosition "0.02 0.97"}]} { set placed 1 }
-                } else {
-                    set gh ""
-                    catch {set gh [win GetGraphicsHeight]}
-                    if {$gh ne "" && ![catch {note SetPosition "10 [expr {int($gh) - 20}]"}]} {
-                        set placed 1
-                    }
+    # Bottom-left placement (white pad sits under the triad). SetPosition's
+    # coordinate system is undocumented — sniff it from GetPosition: values
+    # <= 1 treated as normalized (origin assumed top-left), larger as
+    # pixels sized from the window graphics area.
+    set curPos ""
+    catch {set curPos [note GetPosition]}
+    set placed 0
+    if {[llength $curPos] >= 2} {
+        lassign $curPos px py
+        if {[string is double -strict $px] && [string is double -strict $py]} {
+            if {$px <= 1.0 && $py <= 1.0} {
+                if {![catch {note SetPosition "0.02 0.97"}]} { set placed 1 }
+            } else {
+                set gh ""
+                catch {set gh [win GetGraphicsHeight]}
+                if {$gh ne "" && ![catch {note SetPosition "10 [expr {int($gh) - 20}]"}]} {
+                    set placed 1
                 }
             }
         }
-        set rb ""
-        catch {set rb [note GetPosition]}
-        puts "  note position: '$curPos' -> '$rb' (placed=$placed)"
-    } elseif {$cornerPos ne ""} {
-        # Old style: reuse the hidden built-in note's corner spot
-        if {[catch {note SetPosition $cornerPos} err]} {
-            puts "  WARNING: SetPosition '$cornerPos' failed: $err"
-        }
     }
+    set rb ""
+    catch {set rb [note GetPosition]}
+    puts "  note position: '$curPos' -> '$rb' (placed=$placed)"
     if {![catch {note GetFontHandle nfont}]} {
         catch {nfont SetSize $noteSize}
         catch {nfont ReleaseHandle}

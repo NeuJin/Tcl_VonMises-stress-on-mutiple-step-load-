@@ -648,7 +648,6 @@ proc ::HVTools::BuildToolTab {tab kind} {
     grid $tab.opt.l3    -row 1 -column 0 -sticky w -pady {4 0}
     grid $tab.opt.color -row 1 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
     checkbutton $tab.opt.shownote -text "Show note header" -variable ${ns}::SHOW_NOTE
-    checkbutton $tab.opt.whitenote -text "White note (triad bg)" -variable ${ns}::NOTE_WHITE
     if {$kind eq "sf"} {
         label $tab.opt.l6 -text "Precision:"
         entry $tab.opt.prec -width 4 -textvariable ::SafetyFactor::PRECISION
@@ -664,8 +663,7 @@ proc ::HVTools::BuildToolTab {tab kind} {
         grid $tab.opt.fetch -row 3 -column 3 -sticky w -padx {6 0} -pady {4 0}
         grid $tab.opt.l8    -row 4 -column 0 -sticky w -pady {4 0}
         grid $tab.opt.comp  -row 4 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.shownote  -row 5 -column 0 -columnspan 2 -sticky w -pady {4 0}
-        grid $tab.opt.whitenote -row 5 -column 2 -columnspan 2 -sticky w -pady {4 0}
+        grid $tab.opt.shownote  -row 5 -column 0 -columnspan 4 -sticky w -pady {4 0}
         checkbutton $tab.opt.legend -text "Legend" -variable ::SafetyFactor::SHOW_LEGEND
         ttk::combobox $tab.opt.elem -width 22 -state readonly -textvariable ::HVTools::SF_ELEM \
             -values [list "Shaded + Mesh Lines" "Shaded + Feature Lines" "Shaded only"]
@@ -675,8 +673,7 @@ proc ::HVTools::BuildToolTab {tab kind} {
         grid $tab.opt.disp   -row 6 -column 3 -sticky w -padx {6 0} -pady {4 0}
         bind $tab.opt.dt <<ComboboxSelected>> ::HVTools::SFFetchComps
     } else {
-        grid $tab.opt.shownote  -row 2 -column 0 -columnspan 2 -sticky w -pady {4 0}
-        grid $tab.opt.whitenote -row 2 -column 2 -columnspan 2 -sticky w -pady {4 0}
+        grid $tab.opt.shownote  -row 2 -column 0 -columnspan 4 -sticky w -pady {4 0}
         # Precision + data type / component droplists (Max Stress only)
         label $tab.opt.l6 -text "Precision:"
         entry $tab.opt.prec -width 4 -textvariable ::MaxStress::PRECISION
