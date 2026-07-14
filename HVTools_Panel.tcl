@@ -704,43 +704,72 @@ proc ::HVTools::BuildToolTab {tab kind} {
         grid $tab.opt.recheck -row 4 -column 0 -sticky nwe
         pack $tab.opt -fill x -padx 8 -pady 4
     } else {
-        # SF tab keeps the old flat layout until this reorg is ported over.
-        label $tab.opt.l1 -text "Marker size:"
-        entry $tab.opt.mea -width 5 -textvariable ${ns}::MEA_FSIZE
-        label $tab.opt.l2 -text "Note size:"
-        entry $tab.opt.note -width 5 -textvariable ${ns}::NOTE_FSIZE
-        label $tab.opt.l3 -text "Color (R G B):"
-        entry $tab.opt.color -width 12 -textvariable ${ns}::PINK
-        grid $tab.opt.l1    -row 0 -column 0 -sticky w
-        grid $tab.opt.mea   -row 0 -column 1 -sticky w -padx {4 12}
-        grid $tab.opt.l2    -row 0 -column 2 -sticky w
-        grid $tab.opt.note  -row 0 -column 3 -sticky w -padx {4 0}
-        grid $tab.opt.l3    -row 1 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.color -row 1 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
-        checkbutton $tab.opt.shownote -text "Show note header" -variable ${ns}::SHOW_NOTE
-        label $tab.opt.l6 -text "Precision:"
-        entry $tab.opt.prec -width 4 -textvariable ::SafetyFactor::PRECISION
-        label $tab.opt.l5 -text "Data type:"
-        ttk::combobox $tab.opt.dt -width 26 -textvariable ::SafetyFactor::DATATYPE
-        button $tab.opt.fetch -text "Fetch lists" -width 10 -command ::HVTools::SFFetchTypes
-        label $tab.opt.l8 -text "Component:"
-        ttk::combobox $tab.opt.comp -width 18 -textvariable ::SafetyFactor::DATACOMP
-        grid $tab.opt.l6    -row 2 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.prec  -row 2 -column 1 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.l5    -row 3 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.dt    -row 3 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.fetch -row 3 -column 3 -sticky w -padx {6 0} -pady {4 0}
-        grid $tab.opt.l8    -row 4 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.comp  -row 4 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.shownote  -row 5 -column 0 -columnspan 4 -sticky w -pady {4 0}
-        checkbutton $tab.opt.legend -text "Legend" -variable ::SafetyFactor::SHOW_LEGEND
-        ttk::combobox $tab.opt.elem -width 22 -state readonly -textvariable ::HVTools::SF_ELEM \
+        # ── Legend ──
+        labelframe $tab.opt.legend -text "Legend" -padx 6 -pady 4
+        checkbutton $tab.opt.legend.on -text "On" -variable ::SafetyFactor::SHOW_LEGEND
+        pack $tab.opt.legend.on -anchor w
+
+        # ── Model Display ──
+        labelframe $tab.opt.model -text "Model Display" -padx 6 -pady 4
+        ttk::combobox $tab.opt.model.style -width 22 -state readonly -textvariable ::HVTools::SF_ELEM \
             -values [list "Shaded + Mesh Lines" "Shaded + Feature Lines" "Shaded only"]
-        button $tab.opt.disp -text "Apply Display" -width 12 -command ::HVTools::SFApplyDisplay
-        grid $tab.opt.legend -row 6 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.elem   -row 6 -column 1 -columnspan 2 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.disp   -row 6 -column 3 -sticky w -padx {6 0} -pady {4 0}
-        bind $tab.opt.dt <<ComboboxSelected>> ::HVTools::SFFetchComps
+        button $tab.opt.model.apply -text "Apply Display" -width 12 -command ::HVTools::SFApplyDisplay
+        grid $tab.opt.model.style -row 0 -column 0 -sticky w
+        grid $tab.opt.model.apply -row 0 -column 1 -sticky w -padx {8 0}
+
+        # ── Header Note (the text box: Node ID/MIN) ──
+        labelframe $tab.opt.hnote -text "Header Note" -padx 6 -pady 4
+        checkbutton $tab.opt.hnote.on -text "On" -variable ::SafetyFactor::SHOW_NOTE
+        label $tab.opt.hnote.l1 -text "Font size:"
+        entry $tab.opt.hnote.size -width 5 -textvariable ::SafetyFactor::NOTE_FSIZE
+        label $tab.opt.hnote.l2 -text "Precision:"
+        entry $tab.opt.hnote.prec -width 4 -textvariable ::SafetyFactor::PRECISION
+        grid $tab.opt.hnote.on   -row 0 -column 0 -columnspan 4 -sticky w
+        grid $tab.opt.hnote.l1   -row 1 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.hnote.size -row 1 -column 1 -sticky w -padx {4 12} -pady {4 0}
+        grid $tab.opt.hnote.l2   -row 1 -column 2 -sticky w -pady {4 0}
+        grid $tab.opt.hnote.prec -row 1 -column 3 -sticky w -padx {4 0} -pady {4 0}
+
+        # ── Measure Note (the pink node-ID marker) ──
+        labelframe $tab.opt.mnote -text "Measure Note" -padx 6 -pady 4
+        checkbutton $tab.opt.mnote.on -text "On" -variable ::SafetyFactor::SHOW_MEASURE
+        checkbutton $tab.opt.mnote.val -text "Show value" -variable ::SafetyFactor::MEA_SHOW_VALUE
+        label $tab.opt.mnote.l1 -text "Precision:"
+        entry $tab.opt.mnote.prec -width 4 -textvariable ::SafetyFactor::MEA_PRECISION
+        label $tab.opt.mnote.l2 -text "Size:"
+        entry $tab.opt.mnote.size -width 5 -textvariable ::SafetyFactor::MEA_FSIZE
+        label $tab.opt.mnote.l3 -text "Color (R G B):"
+        entry $tab.opt.mnote.color -width 12 -textvariable ::SafetyFactor::PINK
+        grid $tab.opt.mnote.on    -row 0 -column 0 -sticky w
+        grid $tab.opt.mnote.val   -row 0 -column 1 -columnspan 3 -sticky w
+        grid $tab.opt.mnote.l1    -row 1 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.mnote.prec  -row 1 -column 1 -sticky w -padx {4 12} -pady {4 0}
+        grid $tab.opt.mnote.l2    -row 1 -column 2 -sticky w -pady {4 0}
+        grid $tab.opt.mnote.size  -row 1 -column 3 -sticky w -padx {4 0} -pady {4 0}
+        grid $tab.opt.mnote.l3    -row 2 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.mnote.color -row 2 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
+
+        # ── Re-check (data type / component currently active — pick from
+        # a fetched list only, no free typing, to avoid the padding-label
+        # trap documented in the lib) ──
+        labelframe $tab.opt.recheck -text "Re-check" -padx 6 -pady 4
+        label $tab.opt.recheck.l1 -text "Data type:"
+        ttk::combobox $tab.opt.recheck.dt -width 24 -state readonly -textvariable ::SafetyFactor::DATATYPE
+        button $tab.opt.recheck.fetch -text "Fetch lists" -width 10 -command ::HVTools::SFFetchTypes
+        label $tab.opt.recheck.l2 -text "Component:"
+        ttk::combobox $tab.opt.recheck.comp -width 16 -state readonly -textvariable ::SafetyFactor::DATACOMP
+        grid $tab.opt.recheck.l1    -row 0 -column 0 -sticky w
+        grid $tab.opt.recheck.dt    -row 0 -column 1 -sticky w -padx {4 0}
+        grid $tab.opt.recheck.fetch -row 0 -column 2 -sticky w -padx {8 0}
+        grid $tab.opt.recheck.l2    -row 1 -column 0 -sticky w -pady {4 0}
+        grid $tab.opt.recheck.comp  -row 1 -column 1 -sticky w -padx {4 0} -pady {4 0}
+        bind $tab.opt.recheck.dt <<ComboboxSelected>> ::HVTools::SFFetchComps
+
+        grid $tab.opt.legend  -row 0 -column 0 -sticky nwe -pady {0 4}
+        grid $tab.opt.model   -row 1 -column 0 -sticky nwe -pady {0 4}
+        grid $tab.opt.hnote   -row 2 -column 0 -sticky nwe -pady {0 4}
+        grid $tab.opt.mnote   -row 3 -column 0 -sticky nwe -pady {0 4}
+        grid $tab.opt.recheck -row 4 -column 0 -sticky nwe
         pack $tab.opt -fill x -padx 8 -pady 4
     }
 
