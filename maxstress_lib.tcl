@@ -403,9 +403,14 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
     con SetCornerDataEnabled true
     con SetEnableState true
     con SetAvgAcrossPartsEnable enable
-    set _prec $PRECISION
-    if {![string is integer -strict $_prec] || $_prec < 0 || $_prec > 10} { set _prec 3 }
-    leg SetNumericPrecision $_prec
+    # ⚠️ Legend numeric precision affects the QUERIED value on this HV
+    # build, not just its display — setting it low during the sweep was
+    # silently rounding the max stress before it ever reached the CSV, so
+    # the panel's Precision option (a display-only setting) could never
+    # "add back" lost decimals. Always extract at max precision; PRECISION
+    # only controls how the already-full-precision value is FORMATTED
+    # later (Fmt: CSV write still uses raw %.8f, note/report/table use Fmt).
+    leg SetNumericPrecision 8
 
     # Frame count = what was ACTUALLY appended (not ID arithmetic, which
     # inflates when windows share a model).
@@ -972,7 +977,7 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
         # HV auto-trims leading whitespace on line 1 (the dot anchors the
         # indent), and every line is padded to the same column so all 3
         # lines align.
-        note SetText ".                  $line1\n                   Node ID: $nodeID\n                   MAX: $stress3 MPa"
+        note SetText ".                      $line1\n                       Node ID: $nodeID\n                       MAX: $stress3 MPa"
         catch {note SetAlignment left}
         catch {note SetBorderThickness 1}
         catch {note SetTransparency false}
