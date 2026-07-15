@@ -815,21 +815,36 @@ proc ::MaxStress::ParseViewFile {path} {
 
 # Imports the whole parsed view list into ONE window (all named views —
 # no per-window matching, every window gets the same view library).
+# ⚠️ This is the only proc in the whole tool that re-grabs `vw` across a
+# window loop (every other per-window loop only cycles win/clt/model/
+# con/leg) — a plain release+regrab of `vw` was found to silently keep
+# pointing at window 1 for windows 2+ (the classic "handle already
+# exists, swallowed by catch" trap). Fixed with a full hwi CloseStack/
+# OpenStack + re-grab of sess/proj/page on EVERY window, matching the
+# "mandatory" reset documented for the handle chain.
 proc ::MaxStress::ImportViewsIntoWindow {winIdx views} {
     catch {vw ReleaseHandle} ; catch {win ReleaseHandle}
+    catch {proj ReleaseHandle} ; catch {sess ReleaseHandle}
+    catch {hwi CloseStack}
+    hwi OpenStack
+    hwi GetSessionHandle sess
+    sess GetProjectHandle proj
+    proj GetPageHandle page [proj GetActivePage]
     page GetWindowHandle win $winIdx
     win GetViewControlHandle vw
+
     set n 0
     foreach v $views {
-        lassign $v name proj matrix clip
+        lassign $v name proj_ matrix clip
         if {$name eq ""} { continue }
-        catch {vw SetProjectionType $proj}
+        catch {vw SetProjectionType $proj_}
         if {[llength $matrix] == 16} { catch {vw SetViewMatrix $matrix} }
         if {[llength $clip] >= 4}    { catch {vw SetViewVolume $clip} }
         if {![catch {vw SaveView $name}]} { incr n }
     }
-    catch {vw ReleaseHandle}
-    puts "  window $winIdx: imported $n/[llength $views] view(s)"
+    set active ""
+    catch {set active [vw GetActiveView]}
+    puts "  window $winIdx: imported $n/[llength $views] view(s) (active view now: '$active')"
     return $n
 }
 
@@ -853,7 +868,7 @@ proc ::MaxStress::RunImportViews {viewFile} {
             incr total $n
         }
     }
-    catch {win ReleaseHandle}
+    catch {vw ReleaseHandle} ; catch {win ReleaseHandle}
     catch {hwi CloseStack}
     puts "--- Imported [llength $views] view(s) into $numWindows window(s) ($total total saves) ---"
     return [list $numWindows [llength $views]]
