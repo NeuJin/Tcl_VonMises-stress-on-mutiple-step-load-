@@ -698,6 +698,8 @@ proc ::HVTools::BuildToolTab {tab kind} {
 
     # ── Annotate ──
     labelframe $tab.ann -text " 2. Annotate (from CSV) " -padx 8 -pady 6
+    label  $tab.ann.scope -text "Data-driven: marker + note for one Set (needs Export first)." \
+        -font {-slant italic} -foreground {#555555}
     label  $tab.ann.lbl -text "One selection set ID:"
     entry  $tab.ann.id -width 12
     button $tab.ann.run -text "Annotate" -width 12 \
@@ -712,17 +714,18 @@ proc ::HVTools::BuildToolTab {tab kind} {
         -command [expr {$kind eq "ms" ? "::HVTools::MSImportViews" : "::HVTools::SFImportViews"}]
     button $tab.ann.capture -text "Capture Images (all windows)" \
         -command [expr {$kind eq "ms" ? "::HVTools::MSCapture" : "::HVTools::SFCapture"}]
-    grid $tab.ann.lbl -row 0 -column 0 -sticky w
-    grid $tab.ann.id  -row 1 -column 0 -sticky w -pady 2
-    grid $tab.ann.run -row 1 -column 1 -padx {6 0}
-    grid $tab.ann.ll  -row 2 -column 0 -columnspan 2 -sticky w -pady {6 0}
-    grid $tab.ann.leg -row 3 -column 0 -sticky we -pady 2
-    grid $tab.ann.bl  -row 3 -column 1 -padx {6 0}
-    grid $tab.ann.lv   -row 4 -column 0 -columnspan 2 -sticky w -pady {6 0}
-    grid $tab.ann.view -row 5 -column 0 -sticky we -pady 2
-    grid $tab.ann.bv   -row 5 -column 1 -padx {6 0}
-    grid $tab.ann.impview -row 6 -column 0 -sticky w -pady {4 0}
-    grid $tab.ann.capture -row 7 -column 0 -columnspan 2 -sticky we -pady {6 0}
+    grid $tab.ann.scope -row 0 -column 0 -columnspan 2 -sticky w -pady {0 4}
+    grid $tab.ann.lbl -row 1 -column 0 -sticky w
+    grid $tab.ann.id  -row 2 -column 0 -sticky w -pady 2
+    grid $tab.ann.run -row 2 -column 1 -padx {6 0}
+    grid $tab.ann.ll  -row 3 -column 0 -columnspan 2 -sticky w -pady {6 0}
+    grid $tab.ann.leg -row 4 -column 0 -sticky we -pady 2
+    grid $tab.ann.bl  -row 4 -column 1 -padx {6 0}
+    grid $tab.ann.lv   -row 5 -column 0 -columnspan 2 -sticky w -pady {6 0}
+    grid $tab.ann.view -row 6 -column 0 -sticky we -pady 2
+    grid $tab.ann.bv   -row 6 -column 1 -padx {6 0}
+    grid $tab.ann.impview -row 7 -column 0 -sticky w -pady {4 0}
+    grid $tab.ann.capture -row 8 -column 0 -columnspan 2 -sticky we -pady {6 0}
     grid columnconfigure $tab.ann 0 -weight 1
     pack $tab.ann -fill x -padx 8 -pady 4
 
@@ -777,6 +780,8 @@ proc ::HVTools::BuildToolTab {tab kind} {
     # Re-check. Reads whatever is CURRENTLY set in Legend + Model Display
     # above (live Tcl variables) and applies it to every window.
     button $tab.opt.applyDisplay -text "Apply Display" -command ::HVTools::ApplyDisplayShared
+    label $tab.opt.applyHint -text "Styling only — legend + shading, no data/markers. Independent of Export/Annotate." \
+        -font {-slant italic} -foreground {#555555} -wraplength 240 -justify left
 
     # Re-check: pick-only (readonly) — avoids the padding-label trap
     # documented in the lib (typed labels can silently fail to bind data).
@@ -800,7 +805,8 @@ proc ::HVTools::BuildToolTab {tab kind} {
     grid $tab.opt.hnote        -row 2 -column 0 -sticky nwe -pady {0 4}
     grid $tab.opt.mnote        -row 3 -column 0 -sticky nwe -pady {0 4}
     grid $tab.opt.applyDisplay -row 4 -column 0 -sticky we  -pady {0 4}
-    grid $tab.opt.recheck      -row 5 -column 0 -sticky nwe
+    grid $tab.opt.applyHint    -row 5 -column 0 -sticky w   -pady {0 4}
+    grid $tab.opt.recheck      -row 6 -column 0 -sticky nwe
     pack $tab.opt -fill x -padx 8 -pady 4
 }
 
