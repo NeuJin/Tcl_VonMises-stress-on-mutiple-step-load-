@@ -216,6 +216,75 @@ proc ::HVTools::BrowseLegend {ns} {
     }
 }
 
+# Browse for the optional view-list .txt (ns = ::MaxStress | ::SafetyFactor)
+proc ::HVTools::BrowseViewFile {ns} {
+    set f [tk_getOpenFile -title "Select view list .txt (*ViewName/*Matrix export)" \
+        -filetypes {{"Text files" {.txt}} {"All files" *}}]
+    if {$f ne ""} {
+        set ${ns}::VIEW_TXT $f
+    }
+}
+
+proc ::HVTools::MSImportViews {} {
+    set path $::MaxStress::VIEW_TXT
+    if {[string trim $path] eq ""} {
+        SetStatus "Pick a view list .txt first." red
+        return
+    }
+    SetStatus "Importing views into all windows..." blue
+    if {[catch {::MaxStress::RunImportViews $path} result]} {
+        SetStatus "Import views FAILED: $result" red
+    } else {
+        lassign $result numWindows numViews
+        SetStatus "Imported $numViews view(s) into $numWindows window(s)." darkgreen
+    }
+}
+
+proc ::HVTools::SFImportViews {} {
+    set path $::SafetyFactor::VIEW_TXT
+    if {[string trim $path] eq ""} {
+        SetStatus "Pick a view list .txt first." red
+        return
+    }
+    SetStatus "Importing views into all windows..." blue
+    if {[catch {::SafetyFactor::RunImportViews $path} result]} {
+        SetStatus "Import views FAILED: $result" red
+    } else {
+        lassign $result numWindows numViews
+        SetStatus "Imported $numViews view(s) into $numWindows window(s)." darkgreen
+    }
+}
+
+proc ::HVTools::MSCapture {} {
+    variable MS
+    set setID [string trim [$MS.ann.id get]]
+    if {$setID eq ""} {
+        SetStatus "Enter one selection set ID first (same field as Annotate)." red
+        return
+    }
+    SetStatus "Capturing images for all windows..." blue
+    if {[catch {::MaxStress::RunCapture $setID} result]} {
+        SetStatus "Capture FAILED: $result" red
+    } else {
+        SetStatus "Captured images for $result window(s) -> $::MaxStress::LIB_DIR" darkgreen
+    }
+}
+
+proc ::HVTools::SFCapture {} {
+    variable SF
+    set setID [string trim [$SF.ann.id get]]
+    if {$setID eq ""} {
+        SetStatus "Enter one selection set ID first (same field as Annotate)." red
+        return
+    }
+    SetStatus "Capturing images for all windows..." blue
+    if {[catch {::SafetyFactor::RunCapture $setID} result]} {
+        SetStatus "Capture FAILED: $result" red
+    } else {
+        SetStatus "Captured images for $result window(s) -> $::SafetyFactor::LIB_DIR" darkgreen
+    }
+}
+
 # Element-display dropdown label -> component SetMeshMode value
 proc ::HVTools::ElemMode {label} {
     switch -glob -- $label {
@@ -637,12 +706,24 @@ proc ::HVTools::BuildToolTab {tab kind} {
     label  $tab.ann.ll -text "Legend TCL (optional — capture styling only):"
     entry  $tab.ann.leg -width 30 -textvariable ${ns}::LEGEND_TCL
     button $tab.ann.bl -text "..." -width 3 -command [list ::HVTools::BrowseLegend $ns]
+    label  $tab.ann.lv -text "View list .txt (optional — imports named views, all windows):"
+    entry  $tab.ann.view -width 30 -textvariable ${ns}::VIEW_TXT
+    button $tab.ann.bv -text "..." -width 3 -command [list ::HVTools::BrowseViewFile $ns]
+    button $tab.ann.impview -text "Import Views" -width 12 \
+        -command [expr {$kind eq "ms" ? "::HVTools::MSImportViews" : "::HVTools::SFImportViews"}]
+    button $tab.ann.capture -text "Capture Images (all windows)" \
+        -command [expr {$kind eq "ms" ? "::HVTools::MSCapture" : "::HVTools::SFCapture"}]
     grid $tab.ann.lbl -row 0 -column 0 -sticky w
     grid $tab.ann.id  -row 1 -column 0 -sticky w -pady 2
     grid $tab.ann.run -row 1 -column 1 -padx {6 0}
     grid $tab.ann.ll  -row 2 -column 0 -columnspan 2 -sticky w -pady {6 0}
     grid $tab.ann.leg -row 3 -column 0 -sticky we -pady 2
     grid $tab.ann.bl  -row 3 -column 1 -padx {6 0}
+    grid $tab.ann.lv   -row 4 -column 0 -columnspan 2 -sticky w -pady {6 0}
+    grid $tab.ann.view -row 5 -column 0 -sticky we -pady 2
+    grid $tab.ann.bv   -row 5 -column 1 -padx {6 0}
+    grid $tab.ann.impview -row 6 -column 0 -sticky w -pady {4 0}
+    grid $tab.ann.capture -row 7 -column 0 -columnspan 2 -sticky we -pady {6 0}
     grid columnconfigure $tab.ann 0 -weight 1
     pack $tab.ann -fill x -padx 8 -pady 4
 

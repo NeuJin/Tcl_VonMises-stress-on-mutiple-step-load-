@@ -15,6 +15,8 @@ namespace eval ::MaxStress {
     variable LEGEND_TCL    ""             ;# optional legend TCL sourced per window
                                           ;# during Annotate — capture styling ONLY,
                                           ;# never touches the CSV or results table
+    variable VIEW_TXT      ""             ;# optional *ViewName/*Matrix view-list .txt,
+                                          ;# imported (SaveView) into every window
     variable DATATYPE      "S-Stress components"  ;# contour/query data type
     variable DATACOMP      "Mises"                ;# contour/query component
     variable PRECISION     3              ;# decimals for displayed values AND
@@ -770,6 +772,170 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
 
     catch {hwi CloseStack}
     return [list $val $simIdx $simLabel [ExtractAngle $simLabel]]
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# VIEW IMPORT — parse a *ViewName/*ProjectionType/*Matrix/*ClippingRegion
+# .txt export (blocks separated by lines of '#') and register every view
+# as a NAMED VIEW (vw SaveView) in every window, so it can be recalled
+# later with `vw RestoreView <name>` for a deterministic camera angle
+# independent of window size (see the earlier win-size gotchas in the
+# HW14 library).
+# ─────────────────────────────────────────────────────────────────────
+
+proc ::MaxStress::ParseViewFile {path} {
+    set views {}
+    set f [open $path r]
+    set curName "" ; set curProj "" ; set curMatrix "" ; set curClip ""
+    while {[gets $f line] >= 0} {
+        set trimmed [string trim $line]
+        if {$trimmed eq "" } { continue }
+        if {[string match "#*" $trimmed]} {
+            if {$curName ne ""} {
+                lappend views [list $curName $curProj $curMatrix $curClip]
+            }
+            set curName "" ; set curProj "" ; set curMatrix "" ; set curClip ""
+            continue
+        }
+        set toks [regexp -all -inline {\S+} $trimmed]
+        set key [lindex $toks 0]
+        switch -- $key {
+            "*ViewName"       { set curName [lindex $toks 1] }
+            "*ProjectionType" { set curProj [lindex $toks 1] }
+            "*Matrix"         { set curMatrix [lrange $toks 1 end] }
+            "*ClippingRegion" { set curClip   [lrange $toks 1 end] }
+        }
+    }
+    if {$curName ne ""} {
+        lappend views [list $curName $curProj $curMatrix $curClip]
+    }
+    close $f
+    return $views
+}
+
+# Imports the whole parsed view list into ONE window (all named views —
+# no per-window matching, every window gets the same view library).
+proc ::MaxStress::ImportViewsIntoWindow {winIdx views} {
+    catch {vw ReleaseHandle} ; catch {win ReleaseHandle}
+    page GetWindowHandle win $winIdx
+    win GetViewControlHandle vw
+    set n 0
+    foreach v $views {
+        lassign $v name proj matrix clip
+        if {$name eq ""} { continue }
+        catch {vw SetProjectionType $proj}
+        if {[llength $matrix] == 16} { catch {vw SetViewMatrix $matrix} }
+        if {[llength $clip] >= 4}    { catch {vw SetViewVolume $clip} }
+        if {![catch {vw SaveView $name}]} { incr n }
+    }
+    catch {vw ReleaseHandle}
+    puts "  window $winIdx: imported $n/[llength $views] view(s)"
+    return $n
+}
+
+proc ::MaxStress::RunImportViews {viewFile} {
+    if {![file exists $viewFile]} {
+        error "view file not found: $viewFile"
+    }
+    set views [ParseViewFile $viewFile]
+    if {[llength $views] == 0} {
+        error "no views parsed from $viewFile — check the *ViewName/*Matrix format"
+    }
+
+    CleanHandles
+    OpenChain
+    set numWindows [page GetNumberOfWindows]
+    set total 0
+    for {set wi 1} {$wi <= $numWindows} {incr wi} {
+        if {[catch {ImportViewsIntoWindow $wi $views} n]} {
+            puts "!!!! Window $wi view import failed: $n"
+        } else {
+            incr total $n
+        }
+    }
+    catch {win ReleaseHandle}
+    catch {hwi CloseStack}
+    puts "--- Imported [llength $views] view(s) into $numWindows window(s) ($total total saves) ---"
+    return [list $numWindows [llength $views]]
+}
+
+# ─────────────────────────────────────────────────────────────────────
+# CAPTURE — screenshot every window, filename = SetName_WinID_NodeID.png
+# Uses the same CSV row resolution as annotateWindow but only captures —
+# does not touch measures/notes (run Annotate first if you want them
+# in the picture).
+# ─────────────────────────────────────────────────────────────────────
+
+proc ::MaxStress::CaptureWindowImage {pageHandle winIdx setID csvRows outDir} {
+    foreach handle {win clt model setc} { catch {${handle} ReleaseHandle} }
+    $pageHandle GetWindowHandle win $winIdx
+    win GetClientHandle clt
+    clt GetModelHandle model [clt GetActiveModel]
+
+    if {[catch {model GetSelectionSetHandle setc $setID} err]} {
+        puts "  skip win $winIdx: no selection set $setID ($err)"
+        return
+    }
+    set setName [setc GetLabel]
+    setc ReleaseHandle
+
+    set nodeID ""
+    foreach row $csvRows {
+        lassign $row rWin rSetName rNodeID
+        if {$rWin == $winIdx && $rSetName eq $setName} {
+            set nodeID $rNodeID
+            break
+        }
+    }
+    if {$nodeID eq ""} {
+        puts "  skip win $winIdx: no CSV row for set '$setName'"
+        return
+    }
+
+    set safeName [regsub -all {[\\/:*?"<>|]} $setName "_"]
+    set fname [file join $outDir "${safeName}_${winIdx}_${nodeID}.png"]
+    if {[catch {clt CaptureImage $fname PNG 100} cerr]} {
+        puts "  WARNING: capture failed win $winIdx: $cerr"
+    } else {
+        puts "  captured: $fname"
+    }
+}
+
+proc ::MaxStress::RunCapture {setID {outputDir ""}} {
+    variable LIB_DIR
+    if {$outputDir eq ""} { set outputDir $LIB_DIR }
+    if {[string trim $setID] eq ""} {
+        error "No selection set ID given."
+    }
+    set setID [lindex [split [string trim $setID]] 0]
+
+    set csvFile "$outputDir/Stress_Summary.csv"
+    if {![file exists $csvFile]} {
+        error "Summary CSV not found: $csvFile — run Export first."
+    }
+    set f [open $csvFile r]
+    set csvRows {}
+    set lineNo 0
+    while {[gets $f line] >= 0} {
+        incr lineNo
+        if {$lineNo == 1 || [string trim $line] eq ""} { continue }
+        set fields [split $line ","]
+        if {[llength $fields] < 6} { continue }
+        lappend csvRows $fields
+    }
+    close $f
+
+    CleanHandles
+    OpenChain
+    set numWindows [page GetNumberOfWindows]
+    for {set wi 1} {$wi <= $numWindows} {incr wi} {
+        if {[catch {CaptureWindowImage page $wi $setID $csvRows $outputDir} err]} {
+            puts "!!!! Window $wi capture failed: $err"
+        }
+    }
+    catch {hwi CloseStack}
+    puts "--- Captured images for $numWindows window(s) to $outputDir ---"
+    return $numWindows
 }
 
 # ─────────────────────────────────────────────────────────────────────
