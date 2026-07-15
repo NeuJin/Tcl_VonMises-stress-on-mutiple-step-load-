@@ -910,7 +910,21 @@ proc ::MaxStress::CaptureWindowImage {pageHandle winIdx setID csvRows outDir} {
     set safeName [regsub -all {[\\/:*?"<>|]} $setName "_"]
     set fname [file join $outDir "${safeName}_${winIdx}_${nodeID}.png"]
     if {[catch {clt CaptureImage $fname PNG 100} cerr]} {
-        puts "  WARNING: capture failed win $winIdx: $cerr"
+        # clt CaptureImage is native/GPU and known to fail with "Failed to
+        # allocate GPU memory" on some machines (RDP/virtual GPU, or many
+        # captures back-to-back) — fall back to the session-level capture
+        # family, which is server-side and doesn't touch the GPU.
+        puts "  WARNING: clt CaptureImage failed win $winIdx ($cerr) — trying sess fallback"
+        catch {$pageHandle SetActiveWindow $winIdx}
+        set gw "" ; set gh ""
+        catch {set gw [win GetGraphicsWidth]}
+        catch {set gh [win GetGraphicsHeight]}
+        if {$gw eq "" || $gh eq ""} { set gw 1920 ; set gh 1080 }
+        if {[catch {sess CaptureActiveWindow PNG $fname pixel $gw $gh} cerr2]} {
+            puts "  WARNING: sess CaptureActiveWindow also failed win $winIdx: $cerr2"
+        } else {
+            puts "  captured (fallback): $fname"
+        }
     } else {
         puts "  captured: $fname"
     }
