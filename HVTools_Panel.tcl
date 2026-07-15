@@ -1,9 +1,10 @@
 # HVTools_Panel.tcl — combined add-in panel: Max Stress + Safety Factor.
 #
-# Layout: shared "0. Load model & results" section on top, then a tabbed
-# notebook (like HyperView's own Session/Results tabs):
-#   Tab "Max Stress"    — export / annotate / options / results table
-#   Tab "Safety Factor" — export / annotate / options / results table
+# Layout: LEFT column (narrow) = shared "0. Load model & results" section +
+# a tabbed notebook (Max Stress / Safety Factor, each with Export/Annotate/
+# Options only). RIGHT column (wide) = "3. Results — all windows" — title +
+# controls at the top, per-window grid below — showing whichever tab's
+# results are currently active (switches automatically with the notebook).
 #
 # Requires maxstress_lib.tcl in the SAME folder. safetyfactor_lib.tcl
 # (from the Tcl_Safety-Factor- repo) must also be copied into this folder
@@ -26,8 +27,10 @@ package require Tk
 
 namespace eval ::HVTools {
     variable W  .hvtools
-    variable MS ""
+    variable MS ""      ;# notebook tab frame (Export/Annotate/Options)
     variable SF ""
+    variable MSRES ""   ;# results-pane frame (right column)
+    variable SFRES ""
     variable CONFIG [file join $::MaxStress::LIB_DIR "maxstress_config.txt"]
     # Current selection in the per-window results grids
     variable MS_CURTV   ""
@@ -83,8 +86,8 @@ proc ::HVTools::BrowseModel {} {
     set f [tk_getOpenFile -title "Select model file" \
         -filetypes {{"Model files" {.inp .fem .key .dyn}} {"All files" *}}]
     if {$f ne ""} {
-        $W.load.model delete 0 end
-        $W.load.model insert 0 $f
+        $W.left.load.model delete 0 end
+        $W.left.load.model insert 0 $f
     }
 }
 
@@ -93,17 +96,17 @@ proc ::HVTools::BrowseResults {} {
     set files [tk_getOpenFile -title "Select result file(s)" -multiple 1 \
         -filetypes {{"Result files" {.odb .res .op2 .h3d}} {"All files" *}}]
     foreach f $files {
-        $W.load.res insert end "$f\n"
+        $W.left.load.res insert end "$f\n"
     }
 }
 
 proc ::HVTools::ReadLoadFields {} {
     variable W
-    set modelFile [string trim [$W.load.model get]]
-    set cols [string trim [$W.load.cols get]]
-    set rows [string trim [$W.load.rows get]]
+    set modelFile [string trim [$W.left.load.model get]]
+    set cols [string trim [$W.left.load.cols get]]
+    set rows [string trim [$W.left.load.rows get]]
     set resultFiles {}
-    foreach line [split [$W.load.res get 1.0 end] "\n"] {
+    foreach line [split [$W.left.load.res get 1.0 end] "\n"] {
         set line [string trim $line]
         if {$line ne ""} { lappend resultFiles $line }
     }
@@ -183,7 +186,7 @@ proc ::HVTools::MSFetchTypes {} {
         SetStatus "Fetch failed — is a model loaded in window 1?" red
         return
     }
-    $MS.opt.dt configure -values $dts
+    $MS.opt.recheck.dt configure -values $dts
     MSFetchComps
     SetStatus "Loaded [llength $dts] data types (component list refreshed)." darkgreen
 }
@@ -193,11 +196,11 @@ proc ::HVTools::MSFetchComps {} {
     variable MS
     set dt $::MaxStress::DATATYPE
     if {[catch {::MaxStress::FetchComponentList $dt} comps] || $comps eq ""} {
-        $MS.opt.comp configure -values {}
+        $MS.opt.recheck.comp configure -values {}
         SetStatus "No component list for '$dt' (type one manually)." red
         return
     }
-    $MS.opt.comp configure -values $comps
+    $MS.opt.recheck.comp configure -values $comps
     # Keep the current component if still valid, else pick the first
     if {[lsearch -exact $comps $::MaxStress::DATACOMP] < 0} {
         set ::MaxStress::DATACOMP [lindex $comps 0]
@@ -247,8 +250,8 @@ proc ::HVTools::GetLayoutCR {} {
     variable W
     set c 4 ; set r 2
     catch {
-        set cc [string trim [$W.load.cols get]]
-        set rr [string trim [$W.load.rows get]]
+        set cc [string trim [$W.left.load.cols get]]
+        set rr [string trim [$W.left.load.rows get]]
         if {[string is integer -strict $cc] && $cc > 0} { set c $cc }
         if {[string is integer -strict $rr] && $rr > 0} { set r $rr }
     }
@@ -258,11 +261,11 @@ proc ::HVTools::GetLayoutCR {} {
 # Rebuild the per-window results grid (one block per window, arranged to
 # mirror the page layout) and fill it from Stress_Summary.csv.
 proc ::HVTools::MSLoadResults {} {
-    variable MS
+    variable MSRES
     variable MS_CURTV ; variable MS_CURITEM ; variable MS_CURWIN ; variable MS_CURSET
     set csvFile [file join $::MaxStress::LIB_DIR "Stress_Summary.csv"]
 
-    foreach ch [winfo children $MS.res.grid] { destroy $ch }
+    foreach ch [winfo children $MSRES.grid] { destroy $ch }
     set MS_CURTV "" ; set MS_CURITEM "" ; set MS_CURWIN "" ; set MS_CURSET ""
 
     if {![file exists $csvFile]} {
@@ -289,19 +292,23 @@ proc ::HVTools::MSLoadResults {} {
     lassign [GetLayoutCR] cols rows
     set total [expr {$cols * $rows}]
 
-    # Mini-table height = most rows any window has (clamped 2..8)
+    # Mini-table height = most rows any window has (clamped 2..9 — priority
+    # is showing up to 9 sets at a glance; a per-block scrollbar handles
+    # windows with more than that).
     set maxRows 2
     foreach w [array names winRows] {
         if {[llength $winRows($w)] > $maxRows} { set maxRows [llength $winRows($w)] }
     }
-    if {$maxRows > 8} { set maxRows 8 }
+    if {$maxRows > 9} { set maxRows 9 }
 
     for {set wi 1} {$wi <= $total} {incr wi} {
         set rr [expr {($wi - 1) / $cols}]
         set cc [expr {($wi - 1) % $cols}]
-        set blk $MS.res.grid.w$wi
+        set blk $MSRES.grid.w$wi
         labelframe $blk -text " Win $wi " -padx 2 -pady 2
-        ttk::treeview $blk.tv -columns {set node val angle} -show headings -height $maxRows
+        ttk::treeview $blk.tv -columns {set node val angle} -show headings -height $maxRows \
+            -yscrollcommand [list $blk.sb set]
+        scrollbar $blk.sb -orient vertical -command [list $blk.tv yview]
         $blk.tv heading set   -text "Set"
         $blk.tv heading node  -text "Node ID"
         $blk.tv heading val   -text "Value"
@@ -310,10 +317,11 @@ proc ::HVTools::MSLoadResults {} {
         $blk.tv column node  -width 72  -anchor center
         $blk.tv column val   -width 58  -anchor e
         $blk.tv column angle -width 66  -anchor center
-        pack $blk.tv -fill both -expand 1
+        pack $blk.sb -side right -fill y
+        pack $blk.tv -side left -fill both -expand 1
         grid $blk -row $rr -column $cc -sticky nswe -padx 2 -pady 2
-        grid columnconfigure $MS.res.grid $cc -weight 1
-        grid rowconfigure    $MS.res.grid $rr -weight 1
+        grid columnconfigure $MSRES.grid $cc -weight 1
+        grid rowconfigure    $MSRES.grid $rr -weight 1
 
         if {[info exists winRows($wi)]} {
             foreach row $winRows($wi) {
@@ -325,7 +333,6 @@ proc ::HVTools::MSLoadResults {} {
     SetStatus "Stress results: $n row(s) in ${cols}x${rows} grid." darkgreen
 }
 
-# Row clicked in a window block -> remember it + fill the edit fields
 # Re-layout Stress_Summary.csv into the pivoted Stress_Report.csv
 # (pure file operation — no HyperView involved, instant)
 proc ::HVTools::MSMakeReport {} {
@@ -338,18 +345,19 @@ proc ::HVTools::MSMakeReport {} {
     }
 }
 
+# Row clicked in a window block -> remember it + fill the edit fields
 proc ::HVTools::MSOnSelectBlock {win tv} {
-    variable MS
+    variable MSRES
     variable MS_CURTV ; variable MS_CURITEM ; variable MS_CURWIN ; variable MS_CURSET
     set sel [$tv selection]
     if {[llength $sel] == 0} { return }
     set item [lindex $sel 0]
     lassign [$tv item $item -values] rSet rNode rVal rAngle
     set MS_CURTV $tv ; set MS_CURITEM $item ; set MS_CURWIN $win ; set MS_CURSET $rSet
-    $MS.res.node delete 0 end ; $MS.res.node insert 0 $rNode
-    $MS.res.ang  delete 0 end ; $MS.res.ang  insert 0 $rAngle
+    $MSRES.node delete 0 end ; $MSRES.node insert 0 $rNode
+    $MSRES.ang  delete 0 end ; $MSRES.ang  insert 0 $rAngle
     # Deselect rows in the other window blocks so the active row is unambiguous
-    foreach blk [winfo children $MS.res.grid] {
+    foreach blk [winfo children $MSRES.grid] {
         set otv $blk.tv
         if {[winfo exists $otv] && $otv ne $tv} {
             catch {$otv selection remove [$otv selection]}
@@ -359,14 +367,14 @@ proc ::HVTools::MSOnSelectBlock {win tv} {
 }
 
 proc ::HVTools::MSRequery {} {
-    variable MS
+    variable MSRES
     variable MS_CURTV ; variable MS_CURITEM ; variable MS_CURWIN ; variable MS_CURSET
     if {$MS_CURTV eq "" || ![winfo exists $MS_CURTV]} {
         SetStatus "Select a row in a window block first." red
         return
     }
-    set newNode  [string trim [$MS.res.node get]]
-    set newAngle [string trim [$MS.res.ang get]]
+    set newNode  [string trim [$MSRES.node get]]
+    set newAngle [string trim [$MSRES.ang get]]
     if {$newNode eq "" || $newAngle eq ""} {
         SetStatus "Enter Node ID and Angle first." red
         return
@@ -445,7 +453,7 @@ proc ::HVTools::SFFetchTypes {} {
         SetStatus "Fetch failed — is a model loaded in window 1?" red
         return
     }
-    $SF.opt.dt configure -values $dts
+    $SF.opt.recheck.dt configure -values $dts
     SFFetchComps
     SetStatus "Loaded [llength $dts] data types (component list refreshed)." darkgreen
 }
@@ -454,11 +462,11 @@ proc ::HVTools::SFFetchComps {} {
     variable SF
     set dt $::SafetyFactor::DATATYPE
     if {[catch {::SafetyFactor::FetchComponentList $dt} comps] || $comps eq ""} {
-        $SF.opt.comp configure -values {}
+        $SF.opt.recheck.comp configure -values {}
         SetStatus "No component list for '$dt' (type one manually)." red
         return
     }
-    $SF.opt.comp configure -values $comps
+    $SF.opt.recheck.comp configure -values $comps
     if {[lsearch -exact $comps $::SafetyFactor::DATACOMP] < 0} {
         set ::SafetyFactor::DATACOMP [lindex $comps 0]
     }
@@ -466,11 +474,11 @@ proc ::HVTools::SFFetchComps {} {
 
 # Rebuild the SF per-window results grid from SafetyFactor_Summary.csv
 proc ::HVTools::SFLoadResults {} {
-    variable SF
+    variable SFRES
     variable SF_CURTV ; variable SF_CURITEM ; variable SF_CURWIN ; variable SF_CURSET
     set csvFile [file join $::SafetyFactor::LIB_DIR "SafetyFactor_Summary.csv"]
 
-    foreach ch [winfo children $SF.res.grid] { destroy $ch }
+    foreach ch [winfo children $SFRES.grid] { destroy $ch }
     set SF_CURTV "" ; set SF_CURITEM "" ; set SF_CURWIN "" ; set SF_CURSET ""
 
     if {![file exists $csvFile]} {
@@ -499,24 +507,27 @@ proc ::HVTools::SFLoadResults {} {
     foreach w [array names winRows] {
         if {[llength $winRows($w)] > $maxRows} { set maxRows [llength $winRows($w)] }
     }
-    if {$maxRows > 8} { set maxRows 8 }
+    if {$maxRows > 9} { set maxRows 9 }
 
     for {set wi 1} {$wi <= $total} {incr wi} {
         set rr [expr {($wi - 1) / $cols}]
         set cc [expr {($wi - 1) % $cols}]
-        set blk $SF.res.grid.w$wi
+        set blk $SFRES.grid.w$wi
         labelframe $blk -text " Win $wi " -padx 2 -pady 2
-        ttk::treeview $blk.tv -columns {set node val} -show headings -height $maxRows
+        ttk::treeview $blk.tv -columns {set node val} -show headings -height $maxRows \
+            -yscrollcommand [list $blk.sb set]
+        scrollbar $blk.sb -orient vertical -command [list $blk.tv yview]
         $blk.tv heading set  -text "Set"
         $blk.tv heading node -text "Node ID"
         $blk.tv heading val  -text "Min SF"
         $blk.tv column set  -width 56 -anchor w
         $blk.tv column node -width 78 -anchor center
         $blk.tv column val  -width 62 -anchor e
-        pack $blk.tv -fill both -expand 1
+        pack $blk.sb -side right -fill y
+        pack $blk.tv -side left -fill both -expand 1
         grid $blk -row $rr -column $cc -sticky nswe -padx 2 -pady 2
-        grid columnconfigure $SF.res.grid $cc -weight 1
-        grid rowconfigure    $SF.res.grid $rr -weight 1
+        grid columnconfigure $SFRES.grid $cc -weight 1
+        grid rowconfigure    $SFRES.grid $rr -weight 1
 
         if {[info exists winRows($wi)]} {
             foreach row $winRows($wi) {
@@ -530,15 +541,15 @@ proc ::HVTools::SFLoadResults {} {
 
 # Row clicked in a window block -> remember it + fill the edit field
 proc ::HVTools::SFOnSelectBlock {win tv} {
-    variable SF
+    variable SFRES
     variable SF_CURTV ; variable SF_CURITEM ; variable SF_CURWIN ; variable SF_CURSET
     set sel [$tv selection]
     if {[llength $sel] == 0} { return }
     set item [lindex $sel 0]
     lassign [$tv item $item -values] rSet rNode rVal
     set SF_CURTV $tv ; set SF_CURITEM $item ; set SF_CURWIN $win ; set SF_CURSET $rSet
-    $SF.res.node delete 0 end ; $SF.res.node insert 0 $rNode
-    foreach blk [winfo children $SF.res.grid] {
+    $SFRES.node delete 0 end ; $SFRES.node insert 0 $rNode
+    foreach blk [winfo children $SFRES.grid] {
         set otv $blk.tv
         if {[winfo exists $otv] && $otv ne $tv} {
             catch {$otv selection remove [$otv selection]}
@@ -548,13 +559,13 @@ proc ::HVTools::SFOnSelectBlock {win tv} {
 }
 
 proc ::HVTools::SFRequery {} {
-    variable SF
+    variable SFRES
     variable SF_CURTV ; variable SF_CURITEM ; variable SF_CURWIN ; variable SF_CURSET
     if {$SF_CURTV eq "" || ![winfo exists $SF_CURTV]} {
         SetStatus "Select a row in a window block first." red
         return
     }
-    set newNode [string trim [$SF.res.node get]]
+    set newNode [string trim [$SFRES.node get]]
     if {$newNode eq ""} {
         SetStatus "Enter a Node ID first." red
         return
@@ -595,6 +606,8 @@ proc ::HVTools::SFUpdateCsv {rWin rSet nodeID val} {
 
 # ═════════════════════════ UI build ═════════════════════════
 
+# Export / Annotate / Options only — Results now live in the right column
+# (BuildResultsPane), shared across both tabs and switched by notebook tab.
 proc ::HVTools::BuildToolTab {tab kind} {
     # kind = ms | sf   (ms has the Angle column/field, sf doesn't)
     if {$kind eq "ms"} {
@@ -606,8 +619,8 @@ proc ::HVTools::BuildToolTab {tab kind} {
     # ── Export ──
     labelframe $tab.exp -text " 1. Export (all windows) " -padx 8 -pady 6
     label  $tab.exp.lbl -text "Selection set IDs (space-separated):"
-    entry  $tab.exp.ids -width 32
-    button $tab.exp.run -text "Run Export" -width 14 \
+    entry  $tab.exp.ids -width 26
+    button $tab.exp.run -text "Run Export" -width 12 \
         -command [expr {$kind eq "ms" ? "::HVTools::MSExport" : "::HVTools::SFExport"}]
     grid $tab.exp.lbl -row 0 -column 0 -sticky w
     grid $tab.exp.ids -row 1 -column 0 -sticky we -pady 2
@@ -619,10 +632,10 @@ proc ::HVTools::BuildToolTab {tab kind} {
     labelframe $tab.ann -text " 2. Annotate (from CSV) " -padx 8 -pady 6
     label  $tab.ann.lbl -text "One selection set ID:"
     entry  $tab.ann.id -width 12
-    button $tab.ann.run -text "Annotate" -width 14 \
+    button $tab.ann.run -text "Annotate" -width 12 \
         -command [expr {$kind eq "ms" ? "::HVTools::MSAnnotate" : "::HVTools::SFAnnotate"}]
-    label  $tab.ann.ll -text "Legend TCL (optional — capture styling only, data untouched):"
-    entry  $tab.ann.leg -width 40 -textvariable ${ns}::LEGEND_TCL
+    label  $tab.ann.ll -text "Legend TCL (optional — capture styling only):"
+    entry  $tab.ann.leg -width 30 -textvariable ${ns}::LEGEND_TCL
     button $tab.ann.bl -text "..." -width 3 -command [list ::HVTools::BrowseLegend $ns]
     grid $tab.ann.lbl -row 0 -column 0 -sticky w
     grid $tab.ann.id  -row 1 -column 0 -sticky w -pady 2
@@ -633,195 +646,126 @@ proc ::HVTools::BuildToolTab {tab kind} {
     grid columnconfigure $tab.ann 0 -weight 1
     pack $tab.ann -fill x -padx 8 -pady 4
 
-    # ── Options ──
-    labelframe $tab.opt -text " Options " -padx 8 -pady 6
+    # ── Options (Legend / Model Display / Header Note / Measure Note /
+    # Re-check — same grouped layout for both tools) ──
+    labelframe $tab.opt -text " Options " -padx 6 -pady 6
+
+    labelframe $tab.opt.legend -text "Legend" -padx 6 -pady 4
+    checkbutton $tab.opt.legend.on -text "On" -variable ${ns}::SHOW_LEGEND
+    pack $tab.opt.legend.on -anchor w
+
+    labelframe $tab.opt.model -text "Model Display" -padx 6 -pady 4
+    set elemVar [expr {$kind eq "ms" ? "::HVTools::MS_ELEM" : "::HVTools::SF_ELEM"}]
+    ttk::combobox $tab.opt.model.style -width 20 -state readonly -textvariable $elemVar \
+        -values [list "Shaded + Mesh Lines" "Shaded + Feature Lines" "Shaded only"]
+    button $tab.opt.model.apply -text "Apply Display" -width 12 \
+        -command [expr {$kind eq "ms" ? "::HVTools::MSApplyDisplay" : "::HVTools::SFApplyDisplay"}]
+    grid $tab.opt.model.style -row 0 -column 0 -sticky w
+    grid $tab.opt.model.apply -row 0 -column 1 -sticky w -padx {6 0}
+
+    labelframe $tab.opt.hnote -text "Header Note" -padx 6 -pady 4
+    checkbutton $tab.opt.hnote.on -text "On" -variable ${ns}::SHOW_NOTE
+    label $tab.opt.hnote.l1 -text "Font size:"
+    entry $tab.opt.hnote.size -width 5 -textvariable ${ns}::NOTE_FSIZE
+    label $tab.opt.hnote.l2 -text "Precision:"
+    entry $tab.opt.hnote.prec -width 4 -textvariable ${ns}::PRECISION
+    grid $tab.opt.hnote.on   -row 0 -column 0 -columnspan 4 -sticky w
+    grid $tab.opt.hnote.l1   -row 1 -column 0 -sticky w -pady {4 0}
+    grid $tab.opt.hnote.size -row 1 -column 1 -sticky w -padx {4 10} -pady {4 0}
+    grid $tab.opt.hnote.l2   -row 1 -column 2 -sticky w -pady {4 0}
+    grid $tab.opt.hnote.prec -row 1 -column 3 -sticky w -padx {4 0} -pady {4 0}
+
+    labelframe $tab.opt.mnote -text "Measure Note" -padx 6 -pady 4
+    checkbutton $tab.opt.mnote.on -text "On" -variable ${ns}::SHOW_MEASURE
+    checkbutton $tab.opt.mnote.val -text "Show value" -variable ${ns}::MEA_SHOW_VALUE
+    label $tab.opt.mnote.l1 -text "Precision:"
+    entry $tab.opt.mnote.prec -width 4 -textvariable ${ns}::MEA_PRECISION
+    label $tab.opt.mnote.l2 -text "Size:"
+    entry $tab.opt.mnote.size -width 5 -textvariable ${ns}::MEA_FSIZE
+    label $tab.opt.mnote.l3 -text "Color (R G B):"
+    entry $tab.opt.mnote.color -width 12 -textvariable ${ns}::PINK
+    grid $tab.opt.mnote.on    -row 0 -column 0 -sticky w
+    grid $tab.opt.mnote.val   -row 0 -column 1 -columnspan 3 -sticky w
+    grid $tab.opt.mnote.l1    -row 1 -column 0 -sticky w -pady {4 0}
+    grid $tab.opt.mnote.prec  -row 1 -column 1 -sticky w -padx {4 10} -pady {4 0}
+    grid $tab.opt.mnote.l2    -row 1 -column 2 -sticky w -pady {4 0}
+    grid $tab.opt.mnote.size  -row 1 -column 3 -sticky w -padx {4 0} -pady {4 0}
+    grid $tab.opt.mnote.l3    -row 2 -column 0 -sticky w -pady {4 0}
+    grid $tab.opt.mnote.color -row 2 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
+
+    # Re-check: pick-only (readonly) — avoids the padding-label trap
+    # documented in the lib (typed labels can silently fail to bind data).
+    labelframe $tab.opt.recheck -text "Re-check" -padx 6 -pady 4
+    label $tab.opt.recheck.l1 -text "Data type:"
+    ttk::combobox $tab.opt.recheck.dt -width 22 -state readonly -textvariable ${ns}::DATATYPE
+    button $tab.opt.recheck.fetch -text "Fetch lists" -width 10 \
+        -command [expr {$kind eq "ms" ? "::HVTools::MSFetchTypes" : "::HVTools::SFFetchTypes"}]
+    label $tab.opt.recheck.l2 -text "Component:"
+    ttk::combobox $tab.opt.recheck.comp -width 14 -state readonly -textvariable ${ns}::DATACOMP
+    grid $tab.opt.recheck.l1    -row 0 -column 0 -sticky w
+    grid $tab.opt.recheck.dt    -row 0 -column 1 -sticky w -padx {4 0}
+    grid $tab.opt.recheck.fetch -row 0 -column 2 -sticky w -padx {8 0}
+    grid $tab.opt.recheck.l2    -row 1 -column 0 -sticky w -pady {4 0}
+    grid $tab.opt.recheck.comp  -row 1 -column 1 -sticky w -padx {4 0} -pady {4 0}
+    bind $tab.opt.recheck.dt <<ComboboxSelected>> \
+        [expr {$kind eq "ms" ? "::HVTools::MSFetchComps" : "::HVTools::SFFetchComps"}]
+
+    grid $tab.opt.legend  -row 0 -column 0 -sticky nwe -pady {0 4}
+    grid $tab.opt.model   -row 1 -column 0 -sticky nwe -pady {0 4}
+    grid $tab.opt.hnote   -row 2 -column 0 -sticky nwe -pady {0 4}
+    grid $tab.opt.mnote   -row 3 -column 0 -sticky nwe -pady {0 4}
+    grid $tab.opt.recheck -row 4 -column 0 -sticky nwe
+    pack $tab.opt -fill x -padx 8 -pady 4
+}
+
+# Builds the results pane (title + top control row + per-window grid)
+# inside `res` (a plain frame living in the right column, NOT the notebook
+# tab). kind = ms | sf.
+proc ::HVTools::BuildResultsPane {res kind} {
+    label $res.title -text "3. Results — all windows" -font {-weight bold}
+    pack $res.title -anchor w -pady {0 6}
+
+    # ── Top control row: Node ID / (Angle) / Re-query / Refresh / Report ──
+    frame $res.hdr
+    label $res.hdrl1 -text "Node ID:"
+    entry $res.node -width 12
     if {$kind eq "ms"} {
-        # ── Legend ──
-        labelframe $tab.opt.legend -text "Legend" -padx 6 -pady 4
-        checkbutton $tab.opt.legend.on -text "On" -variable ::MaxStress::SHOW_LEGEND
-        pack $tab.opt.legend.on -anchor w
-
-        # ── Model Display ──
-        labelframe $tab.opt.model -text "Model Display" -padx 6 -pady 4
-        ttk::combobox $tab.opt.model.style -width 22 -state readonly -textvariable ::HVTools::MS_ELEM \
-            -values [list "Shaded + Mesh Lines" "Shaded + Feature Lines" "Shaded only"]
-        button $tab.opt.model.apply -text "Apply Display" -width 12 -command ::HVTools::MSApplyDisplay
-        grid $tab.opt.model.style -row 0 -column 0 -sticky w
-        grid $tab.opt.model.apply -row 0 -column 1 -sticky w -padx {8 0}
-
-        # ── Header Note (the text box: Angle/Node ID/MAX) ──
-        labelframe $tab.opt.hnote -text "Header Note" -padx 6 -pady 4
-        checkbutton $tab.opt.hnote.on -text "On" -variable ::MaxStress::SHOW_NOTE
-        label $tab.opt.hnote.l1 -text "Font size:"
-        entry $tab.opt.hnote.size -width 5 -textvariable ::MaxStress::NOTE_FSIZE
-        label $tab.opt.hnote.l2 -text "Precision:"
-        entry $tab.opt.hnote.prec -width 4 -textvariable ::MaxStress::PRECISION
-        grid $tab.opt.hnote.on   -row 0 -column 0 -columnspan 4 -sticky w
-        grid $tab.opt.hnote.l1   -row 1 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.hnote.size -row 1 -column 1 -sticky w -padx {4 12} -pady {4 0}
-        grid $tab.opt.hnote.l2   -row 1 -column 2 -sticky w -pady {4 0}
-        grid $tab.opt.hnote.prec -row 1 -column 3 -sticky w -padx {4 0} -pady {4 0}
-
-        # ── Measure Note (the pink node-ID marker) ──
-        labelframe $tab.opt.mnote -text "Measure Note" -padx 6 -pady 4
-        checkbutton $tab.opt.mnote.on -text "On" -variable ::MaxStress::SHOW_MEASURE
-        checkbutton $tab.opt.mnote.val -text "Show value" -variable ::MaxStress::MEA_SHOW_VALUE
-        label $tab.opt.mnote.l1 -text "Precision:"
-        entry $tab.opt.mnote.prec -width 4 -textvariable ::MaxStress::MEA_PRECISION
-        label $tab.opt.mnote.l2 -text "Size:"
-        entry $tab.opt.mnote.size -width 5 -textvariable ::MaxStress::MEA_FSIZE
-        label $tab.opt.mnote.l3 -text "Color (R G B):"
-        entry $tab.opt.mnote.color -width 12 -textvariable ::MaxStress::PINK
-        grid $tab.opt.mnote.on    -row 0 -column 0 -sticky w
-        grid $tab.opt.mnote.val   -row 0 -column 1 -columnspan 3 -sticky w
-        grid $tab.opt.mnote.l1    -row 1 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.mnote.prec  -row 1 -column 1 -sticky w -padx {4 12} -pady {4 0}
-        grid $tab.opt.mnote.l2    -row 1 -column 2 -sticky w -pady {4 0}
-        grid $tab.opt.mnote.size  -row 1 -column 3 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.mnote.l3    -row 2 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.mnote.color -row 2 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
-
-        # ── Re-check (data type / component currently active — pick from
-        # a fetched list only, no free typing, to avoid the padding-label
-        # trap documented in the lib) ──
-        labelframe $tab.opt.recheck -text "Re-check" -padx 6 -pady 4
-        label $tab.opt.recheck.l1 -text "Data type:"
-        ttk::combobox $tab.opt.recheck.dt -width 24 -state readonly -textvariable ::MaxStress::DATATYPE
-        button $tab.opt.recheck.fetch -text "Fetch lists" -width 10 -command ::HVTools::MSFetchTypes
-        label $tab.opt.recheck.l2 -text "Component:"
-        ttk::combobox $tab.opt.recheck.comp -width 16 -state readonly -textvariable ::MaxStress::DATACOMP
-        grid $tab.opt.recheck.l1    -row 0 -column 0 -sticky w
-        grid $tab.opt.recheck.dt    -row 0 -column 1 -sticky w -padx {4 0}
-        grid $tab.opt.recheck.fetch -row 0 -column 2 -sticky w -padx {8 0}
-        grid $tab.opt.recheck.l2    -row 1 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.recheck.comp  -row 1 -column 1 -sticky w -padx {4 0} -pady {4 0}
-        bind $tab.opt.recheck.dt <<ComboboxSelected>> ::HVTools::MSFetchComps
-
-        grid $tab.opt.legend  -row 0 -column 0 -sticky nwe -pady {0 4}
-        grid $tab.opt.model   -row 1 -column 0 -sticky nwe -pady {0 4}
-        grid $tab.opt.hnote   -row 2 -column 0 -sticky nwe -pady {0 4}
-        grid $tab.opt.mnote   -row 3 -column 0 -sticky nwe -pady {0 4}
-        grid $tab.opt.recheck -row 4 -column 0 -sticky nwe
-        pack $tab.opt -fill x -padx 8 -pady 4
-    } else {
-        # ── Legend ──
-        labelframe $tab.opt.legend -text "Legend" -padx 6 -pady 4
-        checkbutton $tab.opt.legend.on -text "On" -variable ::SafetyFactor::SHOW_LEGEND
-        pack $tab.opt.legend.on -anchor w
-
-        # ── Model Display ──
-        labelframe $tab.opt.model -text "Model Display" -padx 6 -pady 4
-        ttk::combobox $tab.opt.model.style -width 22 -state readonly -textvariable ::HVTools::SF_ELEM \
-            -values [list "Shaded + Mesh Lines" "Shaded + Feature Lines" "Shaded only"]
-        button $tab.opt.model.apply -text "Apply Display" -width 12 -command ::HVTools::SFApplyDisplay
-        grid $tab.opt.model.style -row 0 -column 0 -sticky w
-        grid $tab.opt.model.apply -row 0 -column 1 -sticky w -padx {8 0}
-
-        # ── Header Note (the text box: Node ID/MIN) ──
-        labelframe $tab.opt.hnote -text "Header Note" -padx 6 -pady 4
-        checkbutton $tab.opt.hnote.on -text "On" -variable ::SafetyFactor::SHOW_NOTE
-        label $tab.opt.hnote.l1 -text "Font size:"
-        entry $tab.opt.hnote.size -width 5 -textvariable ::SafetyFactor::NOTE_FSIZE
-        label $tab.opt.hnote.l2 -text "Precision:"
-        entry $tab.opt.hnote.prec -width 4 -textvariable ::SafetyFactor::PRECISION
-        grid $tab.opt.hnote.on   -row 0 -column 0 -columnspan 4 -sticky w
-        grid $tab.opt.hnote.l1   -row 1 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.hnote.size -row 1 -column 1 -sticky w -padx {4 12} -pady {4 0}
-        grid $tab.opt.hnote.l2   -row 1 -column 2 -sticky w -pady {4 0}
-        grid $tab.opt.hnote.prec -row 1 -column 3 -sticky w -padx {4 0} -pady {4 0}
-
-        # ── Measure Note (the pink node-ID marker) ──
-        labelframe $tab.opt.mnote -text "Measure Note" -padx 6 -pady 4
-        checkbutton $tab.opt.mnote.on -text "On" -variable ::SafetyFactor::SHOW_MEASURE
-        checkbutton $tab.opt.mnote.val -text "Show value" -variable ::SafetyFactor::MEA_SHOW_VALUE
-        label $tab.opt.mnote.l1 -text "Precision:"
-        entry $tab.opt.mnote.prec -width 4 -textvariable ::SafetyFactor::MEA_PRECISION
-        label $tab.opt.mnote.l2 -text "Size:"
-        entry $tab.opt.mnote.size -width 5 -textvariable ::SafetyFactor::MEA_FSIZE
-        label $tab.opt.mnote.l3 -text "Color (R G B):"
-        entry $tab.opt.mnote.color -width 12 -textvariable ::SafetyFactor::PINK
-        grid $tab.opt.mnote.on    -row 0 -column 0 -sticky w
-        grid $tab.opt.mnote.val   -row 0 -column 1 -columnspan 3 -sticky w
-        grid $tab.opt.mnote.l1    -row 1 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.mnote.prec  -row 1 -column 1 -sticky w -padx {4 12} -pady {4 0}
-        grid $tab.opt.mnote.l2    -row 1 -column 2 -sticky w -pady {4 0}
-        grid $tab.opt.mnote.size  -row 1 -column 3 -sticky w -padx {4 0} -pady {4 0}
-        grid $tab.opt.mnote.l3    -row 2 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.mnote.color -row 2 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
-
-        # ── Re-check (data type / component currently active — pick from
-        # a fetched list only, no free typing, to avoid the padding-label
-        # trap documented in the lib) ──
-        labelframe $tab.opt.recheck -text "Re-check" -padx 6 -pady 4
-        label $tab.opt.recheck.l1 -text "Data type:"
-        ttk::combobox $tab.opt.recheck.dt -width 24 -state readonly -textvariable ::SafetyFactor::DATATYPE
-        button $tab.opt.recheck.fetch -text "Fetch lists" -width 10 -command ::HVTools::SFFetchTypes
-        label $tab.opt.recheck.l2 -text "Component:"
-        ttk::combobox $tab.opt.recheck.comp -width 16 -state readonly -textvariable ::SafetyFactor::DATACOMP
-        grid $tab.opt.recheck.l1    -row 0 -column 0 -sticky w
-        grid $tab.opt.recheck.dt    -row 0 -column 1 -sticky w -padx {4 0}
-        grid $tab.opt.recheck.fetch -row 0 -column 2 -sticky w -padx {8 0}
-        grid $tab.opt.recheck.l2    -row 1 -column 0 -sticky w -pady {4 0}
-        grid $tab.opt.recheck.comp  -row 1 -column 1 -sticky w -padx {4 0} -pady {4 0}
-        bind $tab.opt.recheck.dt <<ComboboxSelected>> ::HVTools::SFFetchComps
-
-        grid $tab.opt.legend  -row 0 -column 0 -sticky nwe -pady {0 4}
-        grid $tab.opt.model   -row 1 -column 0 -sticky nwe -pady {0 4}
-        grid $tab.opt.hnote   -row 2 -column 0 -sticky nwe -pady {0 4}
-        grid $tab.opt.mnote   -row 3 -column 0 -sticky nwe -pady {0 4}
-        grid $tab.opt.recheck -row 4 -column 0 -sticky nwe
-        pack $tab.opt -fill x -padx 8 -pady 4
+        label $res.hdrl2 -text "Angle:"
+        entry $res.ang -width 12
     }
-
-    # ── Results ──
-    labelframe $tab.res -text " 3. Results — all windows " -padx 8 -pady 6
+    button $res.requery -text "Re-query Value" \
+        -command [expr {$kind eq "ms" ? "::HVTools::MSRequery" : "::HVTools::SFRequery"}]
+    button $res.refresh -text "Refresh from CSV" \
+        -command [expr {$kind eq "ms" ? "::HVTools::MSLoadResults" : "::HVTools::SFLoadResults"}]
+    pack $res.hdrl1  -in $res.hdr -side left
+    pack $res.node   -in $res.hdr -side left -padx {4 10}
     if {$kind eq "ms"} {
-        # Per-window grid mirroring the page layout; blocks are (re)built by
-        # MSLoadResults from the CSV + the Load section's cols x rows.
-        frame $tab.res.grid
-        frame  $tab.res.edit
-        frame  $tab.res.btns        ;# created BEFORE its packed children —
-                                     # a later-created frame stacks on top of
-                                     # earlier siblings and hides them
-        label  $tab.res.edit.l1 -text "Node ID:"
-        entry  $tab.res.node -width 12
-        label  $tab.res.edit.l2 -text "Angle:"
-        entry  $tab.res.ang -width 12
-        button $tab.res.requery -text "Re-query Value" -command ::HVTools::MSRequery
-        button $tab.res.refresh -text "Refresh from CSV" -command ::HVTools::MSLoadResults
-        button $tab.res.report  -text "Make Report" -command ::HVTools::MSMakeReport
+        pack $res.hdrl2 -in $res.hdr -side left
+        pack $res.ang   -in $res.hdr -side left -padx {4 10}
+    }
+    pack $res.requery -in $res.hdr -side left -padx {0 6}
+    pack $res.refresh -in $res.hdr -side left -padx {0 6}
+    if {$kind eq "ms"} {
+        button $res.report -text "Make Report" -command ::HVTools::MSMakeReport
+        pack $res.report -in $res.hdr -side left
+    }
+    pack $res.hdr -anchor w -pady {0 8}
 
-        grid $tab.res.grid -row 0 -column 0 -sticky nswe
-        grid $tab.res.edit -row 1 -column 0 -sticky w -pady {4 0}
-        pack $tab.res.edit.l1 -in $tab.res.edit -side left
-        pack $tab.res.node    -in $tab.res.edit -side left -padx {4 10}
-        pack $tab.res.edit.l2 -in $tab.res.edit -side left
-        pack $tab.res.ang     -in $tab.res.edit -side left -padx {4 10}
-        pack $tab.res.requery -in $tab.res.edit -side left
-        grid $tab.res.btns -row 2 -column 0 -sticky w -pady {4 0}
-        pack $tab.res.refresh -in $tab.res.btns -side left
-        pack $tab.res.report  -in $tab.res.btns -side left -padx {8 0}
-        grid columnconfigure $tab.res 0 -weight 1
-        grid rowconfigure    $tab.res 0 -weight 1
-        pack $tab.res -fill both -expand 1 -padx 8 -pady 4
+    # ── Per-window grid (rebuilt by MSLoadResults/SFLoadResults) ──
+    frame $res.grid
+    pack $res.grid -fill both -expand 1
+}
+
+proc ::HVTools::OnTabChanged {} {
+    variable W
+    variable MSRES
+    variable SFRES
+    variable HAS_SF
+    set sel [$W.nb select]
+    if {$HAS_SF && $sel eq $::HVTools::SF} {
+        raise $SFRES
     } else {
-        # SF: same per-window grid as the Max Stress tab (no Angle column)
-        frame $tab.res.grid
-        frame  $tab.res.edit
-        label  $tab.res.edit.l1 -text "Node ID:"
-        entry  $tab.res.node -width 12
-        button $tab.res.requery -text "Re-query Value" -command ::HVTools::SFRequery
-        button $tab.res.refresh -text "Refresh from CSV" -command ::HVTools::SFLoadResults
-
-        grid $tab.res.grid -row 0 -column 0 -sticky nswe
-        grid $tab.res.edit -row 1 -column 0 -sticky w -pady {4 0}
-        pack $tab.res.edit.l1 -in $tab.res.edit -side left
-        pack $tab.res.node    -in $tab.res.edit -side left -padx {4 10}
-        pack $tab.res.requery -in $tab.res.edit -side left
-        grid $tab.res.refresh -row 2 -column 0 -sticky w -pady {4 0}
-        grid columnconfigure $tab.res 0 -weight 1
-        grid rowconfigure    $tab.res 0 -weight 1
-        pack $tab.res -fill both -expand 1 -padx 8 -pady 4
+        raise $MSRES
     }
 }
 
@@ -829,54 +773,62 @@ proc ::HVTools::Build {} {
     variable W
     variable MS
     variable SF
+    variable MSRES
+    variable SFRES
     variable HAS_SF
 
     catch {destroy $W}
     toplevel $W
     wm title $W "HV Tools — Max Stress / Safety Factor — Nguyen Tan Loc"
     wm attributes $W -topmost 1
-    wm resizable $W 1 1     ;# fully resizable — the per-window results grid needs width
+    wm resizable $W 1 1
 
-    # ── Shared Load section ──
-    labelframe $W.load -text " 0. Load model & results " -padx 8 -pady 6
-    label  $W.load.lm -text "Model file (shared by all windows):"
-    entry  $W.load.model -width 46
-    button $W.load.bm -text "..." -width 3 -command ::HVTools::BrowseModel
-    label  $W.load.lr -text "Result files (one per line — one window each):"
-    text   $W.load.res -width 46 -height 4 -yscrollcommand [list $W.load.rsb set]
-    scrollbar $W.load.rsb -orient vertical -command [list $W.load.res yview]
-    button $W.load.br -text "Add..." -width 6 -command ::HVTools::BrowseResults
-    frame  $W.load.lay
-    label  $W.load.lay.l -text "Layout:"
-    entry  $W.load.cols -width 3
-    label  $W.load.lay.x -text "x"
-    entry  $W.load.rows -width 3
-    label  $W.load.lay.hint -text "(ngang x doc)"
-    button $W.load.run -text "Load All" -width 14 -command ::HVTools::DoLoadAll
-    button $W.load.reset -text "Reset (New)" -width 11 -command ::HVTools::DoReset
+    grid columnconfigure $W 1 -weight 1
+    grid rowconfigure    $W 0 -weight 1
 
-    grid $W.load.lm    -row 0 -column 0 -columnspan 2 -sticky w
-    grid $W.load.model -row 1 -column 0 -sticky we -pady 2
-    grid $W.load.bm    -row 1 -column 1 -padx {4 0}
-    grid $W.load.lr    -row 2 -column 0 -columnspan 2 -sticky w -pady {6 0}
-    grid $W.load.res   -row 3 -column 0 -sticky we -pady 2
-    grid $W.load.rsb   -row 3 -column 1 -sticky ns
-    grid $W.load.br    -row 4 -column 0 -sticky w
-    grid $W.load.lay   -row 5 -column 0 -sticky w -pady {6 0}
-    pack $W.load.lay.l    -in $W.load.lay -side left
-    pack $W.load.cols     -in $W.load.lay -side left -padx {4 2}
-    pack $W.load.lay.x    -in $W.load.lay -side left
-    pack $W.load.rows     -in $W.load.lay -side left -padx {2 4}
-    pack $W.load.lay.hint -in $W.load.lay -side left
-    pack $W.load.reset    -in $W.load.lay -side left -padx {20 0}
-    pack $W.load.run      -in $W.load.lay -side left -padx {6 0}
-    grid columnconfigure $W.load 0 -weight 1
-    pack $W.load -fill x -padx 10 -pady {10 4}
+    # ── LEFT column: Load section + Notebook (Export/Annotate/Options) ──
+    frame $W.left
+    grid $W.left -row 0 -column 0 -sticky nsw
 
-    $W.load.cols insert 0 "4"
-    $W.load.rows insert 0 "2"
+    labelframe $W.left.load -text " 0. Load model & results " -padx 8 -pady 6
+    label  $W.left.load.lm -text "Model file (shared by all windows):"
+    entry  $W.left.load.model -width 40
+    button $W.left.load.bm -text "..." -width 3 -command ::HVTools::BrowseModel
+    label  $W.left.load.lr -text "Result files (one per line — one window each):"
+    text   $W.left.load.res -width 40 -height 12 -yscrollcommand [list $W.left.load.rsb set]
+    scrollbar $W.left.load.rsb -orient vertical -command [list $W.left.load.res yview]
+    button $W.left.load.br -text "Add..." -width 6 -command ::HVTools::BrowseResults
+    frame  $W.left.load.lay
+    label  $W.left.load.lay.l -text "Layout:"
+    entry  $W.left.load.cols -width 3
+    label  $W.left.load.lay.x -text "x"
+    entry  $W.left.load.rows -width 3
+    label  $W.left.load.lay.hint -text "(ngang x doc)"
+    button $W.left.load.run -text "Load All" -width 10 -command ::HVTools::DoLoadAll
+    button $W.left.load.reset -text "Reset (New)" -width 10 -command ::HVTools::DoReset
 
-    # ── Notebook: one tab per tool ──
+    grid $W.left.load.lm    -row 0 -column 0 -columnspan 2 -sticky w
+    grid $W.left.load.model -row 1 -column 0 -sticky we -pady 2
+    grid $W.left.load.bm    -row 1 -column 1 -padx {4 0}
+    grid $W.left.load.lr    -row 2 -column 0 -columnspan 2 -sticky w -pady {6 0}
+    grid $W.left.load.res   -row 3 -column 0 -sticky we -pady 2
+    grid $W.left.load.rsb   -row 3 -column 1 -sticky ns
+    grid $W.left.load.br    -row 4 -column 0 -sticky w
+    grid $W.left.load.lay   -row 5 -column 0 -columnspan 2 -sticky w -pady {6 0}
+    pack $W.left.load.lay.l    -in $W.left.load.lay -side left
+    pack $W.left.load.cols     -in $W.left.load.lay -side left -padx {4 2}
+    pack $W.left.load.lay.x    -in $W.left.load.lay -side left
+    pack $W.left.load.rows     -in $W.left.load.lay -side left -padx {2 4}
+    pack $W.left.load.lay.hint -in $W.left.load.lay -side left
+    grid $W.left.load.reset -row 6 -column 0 -sticky w -pady {6 0}
+    grid $W.left.load.run   -row 6 -column 1 -sticky w -pady {6 0}
+    grid columnconfigure $W.left.load 0 -weight 1
+    pack $W.left.load -fill x -padx 10 -pady {10 4}
+
+    $W.left.load.cols insert 0 "4"
+    $W.left.load.rows insert 0 "2"
+
+    # ── Notebook: one tab per tool (Export/Annotate/Options only) ──
     ttk::notebook $W.nb
     frame $W.nb.ms
     frame $W.nb.sf
@@ -893,11 +845,35 @@ proc ::HVTools::Build {} {
             -foreground red -justify left
         pack $SF.missing -padx 20 -pady 30 -anchor w
     }
-    pack $W.nb -fill both -expand 1 -padx 10 -pady 4
+    pack $W.nb -in $W.left -fill both -expand 1 -padx 10 -pady 4
+    bind $W.nb <<NotebookTabChanged>> ::HVTools::OnTabChanged
 
-    # ── Status bar ──
+    # ── RIGHT column: Results (shared, one pane per tool, raised on tab switch) ──
+    frame $W.right -padx 10 -pady 10
+    grid $W.right -row 0 -column 1 -sticky nsew
+
+    frame $W.right.container
+    pack $W.right.container -fill both -expand 1
+    frame $W.right.container.ms
+    BuildResultsPane $W.right.container.ms ms
+    grid $W.right.container.ms -row 0 -column 0 -sticky nsew
+    set MSRES $W.right.container.ms
+
+    if {$HAS_SF} {
+        frame $W.right.container.sf
+        BuildResultsPane $W.right.container.sf sf
+        grid $W.right.container.sf -row 0 -column 0 -sticky nsew
+        set SFRES $W.right.container.sf
+    } else {
+        set SFRES $MSRES
+    }
+    grid columnconfigure $W.right.container 0 -weight 1
+    grid rowconfigure    $W.right.container 0 -weight 1
+    raise $MSRES
+
+    # ── Status bar (spans both columns) ──
     label $W.status -text "Ready." -anchor w -relief sunken -padx 6
-    pack $W.status -fill x -side bottom -padx 10 -pady {4 10}
+    grid $W.status -row 1 -column 0 -columnspan 2 -sticky we -padx 10 -pady {4 10}
 
     # Pre-fill tables from existing CSVs
     catch {MSLoadResults}
@@ -909,11 +885,11 @@ proc ::HVTools::Build {} {
     set cfg [LoadConfig]
     if {$cfg ne ""} {
         lassign $cfg modelFile cols rows resultFiles
-        $W.load.model delete 0 end ; $W.load.model insert 0 $modelFile
-        $W.load.cols  delete 0 end ; $W.load.cols  insert 0 $cols
-        $W.load.rows  delete 0 end ; $W.load.rows  insert 0 $rows
-        $W.load.res   delete 1.0 end
-        foreach rf $resultFiles { $W.load.res insert end "$rf\n" }
+        $W.left.load.model delete 0 end ; $W.left.load.model insert 0 $modelFile
+        $W.left.load.cols  delete 0 end ; $W.left.load.cols  insert 0 $cols
+        $W.left.load.rows  delete 0 end ; $W.left.load.rows  insert 0 $rows
+        $W.left.load.res   delete 1.0 end
+        foreach rf $resultFiles { $W.left.load.res insert end "$rf\n" }
         SetStatus "Saved paths restored — click Load All when ready."
     }
 }
