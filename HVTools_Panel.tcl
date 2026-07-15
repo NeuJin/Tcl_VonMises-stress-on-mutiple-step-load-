@@ -41,9 +41,13 @@ namespace eval ::HVTools {
     variable SF_CURITEM ""
     variable SF_CURWIN  ""
     variable SF_CURSET  ""
-    # Element-display dropdown selections
-    variable MS_ELEM "Shaded + Feature Lines"
-    variable SF_ELEM "Shaded + Feature Lines"
+    # Legend/display style are window-level, not tool-specific — Max Stress
+    # and Safety Factor look at the same physical windows, so both tabs
+    # share ONE Legend checkbox + ONE Model Display dropdown + ONE Apply
+    # Display action (::MaxStress::ApplyDisplay is tool-agnostic: it only
+    # touches con/leg/component handles, nothing Max-Stress-specific).
+    variable SHOW_LEGEND 1
+    variable DISPLAY_STYLE "Shaded + Feature Lines"
 }
 
 proc ::HVTools::SetStatus {msg {color black}} {
@@ -294,23 +298,18 @@ proc ::HVTools::ElemMode {label} {
     }
 }
 
-proc ::HVTools::MSApplyDisplay {} {
-    variable MS_ELEM
+# Shared by both tabs — Legend/Model Display are window-level settings,
+# not tool-specific, so ONE Apply Display action (using ::MaxStress::
+# ApplyDisplay, which is itself tool-agnostic) covers both Max Stress and
+# Safety Factor windows in one click, regardless of which tab is active.
+proc ::HVTools::ApplyDisplayShared {} {
+    variable SHOW_LEGEND
+    variable DISPLAY_STYLE
     SetStatus "Applying display to all windows..." blue
-    if {[catch {::MaxStress::ApplyDisplay $::MaxStress::SHOW_LEGEND [ElemMode $MS_ELEM]} err]} {
+    if {[catch {::MaxStress::ApplyDisplay $SHOW_LEGEND [ElemMode $DISPLAY_STYLE]} err]} {
         SetStatus "Apply display FAILED: $err" red
     } else {
-        SetStatus "Display applied (legend=$::MaxStress::SHOW_LEGEND, $MS_ELEM)." darkgreen
-    }
-}
-
-proc ::HVTools::SFApplyDisplay {} {
-    variable SF_ELEM
-    SetStatus "Applying display to all windows..." blue
-    if {[catch {::SafetyFactor::ApplyDisplay $::SafetyFactor::SHOW_LEGEND [ElemMode $SF_ELEM]} err]} {
-        SetStatus "Apply display FAILED: $err" red
-    } else {
-        SetStatus "Display applied (legend=$::SafetyFactor::SHOW_LEGEND, $SF_ELEM)." darkgreen
+        SetStatus "Display applied to all windows (legend=$SHOW_LEGEND, $DISPLAY_STYLE)." darkgreen
     }
 }
 
@@ -731,18 +730,18 @@ proc ::HVTools::BuildToolTab {tab kind} {
     # Re-check — same grouped layout for both tools) ──
     labelframe $tab.opt -text " Options " -padx 6 -pady 6
 
+    # Legend + Model Display are SHARED between both tabs (::HVTools::
+    # SHOW_LEGEND / DISPLAY_STYLE, not ${ns}::) — they're window-level
+    # settings, not tool-specific; changing them in one tab is reflected
+    # in the other automatically since it's the same Tcl variable.
     labelframe $tab.opt.legend -text "Legend" -padx 6 -pady 4
-    checkbutton $tab.opt.legend.on -text "On" -variable ${ns}::SHOW_LEGEND
+    checkbutton $tab.opt.legend.on -text "On" -variable ::HVTools::SHOW_LEGEND
     pack $tab.opt.legend.on -anchor w
 
     labelframe $tab.opt.model -text "Model Display" -padx 6 -pady 4
-    set elemVar [expr {$kind eq "ms" ? "::HVTools::MS_ELEM" : "::HVTools::SF_ELEM"}]
-    ttk::combobox $tab.opt.model.style -width 20 -state readonly -textvariable $elemVar \
+    ttk::combobox $tab.opt.model.style -width 22 -state readonly -textvariable ::HVTools::DISPLAY_STYLE \
         -values [list "Shaded + Mesh Lines" "Shaded + Feature Lines" "Shaded only"]
-    button $tab.opt.model.apply -text "Apply Display" -width 12 \
-        -command [expr {$kind eq "ms" ? "::HVTools::MSApplyDisplay" : "::HVTools::SFApplyDisplay"}]
-    grid $tab.opt.model.style -row 0 -column 0 -sticky w
-    grid $tab.opt.model.apply -row 0 -column 1 -sticky w -padx {6 0}
+    pack $tab.opt.model.style -anchor w
 
     labelframe $tab.opt.hnote -text "Header Note" -padx 6 -pady 4
     checkbutton $tab.opt.hnote.on -text "On" -variable ${ns}::SHOW_NOTE
@@ -774,6 +773,11 @@ proc ::HVTools::BuildToolTab {tab kind} {
     grid $tab.opt.mnote.l3    -row 2 -column 0 -sticky w -pady {4 0}
     grid $tab.opt.mnote.color -row 2 -column 1 -columnspan 3 -sticky w -padx {4 0} -pady {4 0}
 
+    # Apply Display — standalone, shared between tabs, sits right above
+    # Re-check. Reads whatever is CURRENTLY set in Legend + Model Display
+    # above (live Tcl variables) and applies it to every window.
+    button $tab.opt.applyDisplay -text "Apply Display" -command ::HVTools::ApplyDisplayShared
+
     # Re-check: pick-only (readonly) — avoids the padding-label trap
     # documented in the lib (typed labels can silently fail to bind data).
     labelframe $tab.opt.recheck -text "Re-check" -padx 6 -pady 4
@@ -791,11 +795,12 @@ proc ::HVTools::BuildToolTab {tab kind} {
     bind $tab.opt.recheck.dt <<ComboboxSelected>> \
         [expr {$kind eq "ms" ? "::HVTools::MSFetchComps" : "::HVTools::SFFetchComps"}]
 
-    grid $tab.opt.legend  -row 0 -column 0 -sticky nwe -pady {0 4}
-    grid $tab.opt.model   -row 1 -column 0 -sticky nwe -pady {0 4}
-    grid $tab.opt.hnote   -row 2 -column 0 -sticky nwe -pady {0 4}
-    grid $tab.opt.mnote   -row 3 -column 0 -sticky nwe -pady {0 4}
-    grid $tab.opt.recheck -row 4 -column 0 -sticky nwe
+    grid $tab.opt.legend       -row 0 -column 0 -sticky nwe -pady {0 4}
+    grid $tab.opt.model        -row 1 -column 0 -sticky nwe -pady {0 4}
+    grid $tab.opt.hnote        -row 2 -column 0 -sticky nwe -pady {0 4}
+    grid $tab.opt.mnote        -row 3 -column 0 -sticky nwe -pady {0 4}
+    grid $tab.opt.applyDisplay -row 4 -column 0 -sticky we  -pady {0 4}
+    grid $tab.opt.recheck      -row 5 -column 0 -sticky nwe
     pack $tab.opt -fill x -padx 8 -pady 4
 }
 
