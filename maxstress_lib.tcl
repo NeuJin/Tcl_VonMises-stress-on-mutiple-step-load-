@@ -111,6 +111,19 @@ proc ::MaxStress::OpenChain {} {
     proj GetPageHandle page [proj GetActivePage]
 }
 
+# Writes to disk immediately (open/puts/flush/close every call) so the
+# last few lines survive even if HW crashes and takes the Tcl console
+# down with it before anyone can read/screenshot it. Used to pinpoint
+# which HV API call was in flight when a native crash happens.
+proc ::MaxStress::DebugLog {msg} {
+    catch {
+        set fh [open {C:/temp/hvtools_load_debug.log} a]
+        puts $fh "[clock format [clock seconds] -format {%H:%M:%S}] $msg"
+        flush $fh
+        close $fh
+    }
+}
+
 # ─────────────────────────────────────────────────────────────────────
 # LOAD — set page layout, then load the SAME model file into every
 # window with a DIFFERENT result file per window.
@@ -216,6 +229,7 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
     set numWindows [page GetNumberOfWindows]
     }
     puts "--- Page has $numWindows window(s); loading [llength $resultFiles] result file(s) ---"
+    DebugLog "LoadAll: $numWindows window(s), [llength $resultFiles] result file(s), model=$modelFile"
 
     set winIdx 1
     foreach rf $resultFiles {
@@ -226,15 +240,20 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         puts ""
         puts "===== Window $winIdx ====="
         puts "  result: [file tail $rf]"
+        DebugLog "Window $winIdx: begin (result=[file tail $rf])"
 
         if {[catch {
 
         foreach handle {win clt model} {
             catch {${handle} ReleaseHandle}
         }
+        DebugLog "Window $winIdx: handles released"
         catch {page SetActiveWindow $winIdx}
+        DebugLog "Window $winIdx: SetActiveWindow done"
         page GetWindowHandle win $winIdx
+        DebugLog "Window $winIdx: GetWindowHandle done"
         win GetClientHandle clt
+        DebugLog "Window $winIdx: GetClientHandle done"
 
         # Clear any model already in this window (re-runnable). GetModelList
         # may not exist on every HV version — fall back to popping the
@@ -260,18 +279,26 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
             }
             puts "  cleared models (fallback): $_cleared"
         }
+        DebugLog "Window $winIdx: old models cleared"
 
         # HV14-confirmed load pattern: AddModel geometry, then attach results
+        DebugLog "Window $winIdx: calling clt AddModel $modelFile"
         clt AddModel $modelFile
+        DebugLog "Window $winIdx: AddModel returned OK"
         clt GetModelHandle model [clt GetActiveModel]
+        DebugLog "Window $winIdx: GetModelHandle done, calling model SetResult $rf"
         model SetResult $rf
+        DebugLog "Window $winIdx: SetResult returned OK, calling clt Draw"
         clt Draw
+        DebugLog "Window $winIdx: Draw returned OK"
         win ReleaseHandle
 
         puts "  loaded OK"
+        DebugLog "Window $winIdx: loaded OK"
 
         } _werr]} {
             puts "!!!! Window $winIdx load failed — skipped: $_werr"
+            DebugLog "Window $winIdx: FAILED - $_werr"
         }
         incr winIdx
     }
