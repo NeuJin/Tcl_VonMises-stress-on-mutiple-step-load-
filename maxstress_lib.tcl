@@ -244,9 +244,21 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
 
         if {[catch {
 
-        foreach handle {win clt model} {
+        # Full stack reset per window (NOT just releasing win/clt/model) —
+        # same fix that solved "view import only applied to window 1" in
+        # ImportViewsIntoWindow. A single long-lived hwi OpenStack spanning
+        # all N windows apparently accumulates stale state that a plain
+        # per-handle ReleaseHandle doesn't fully clear, crashing HW 2025.1
+        # partway through (observed: always window 3, regardless of which
+        # result file is there — position-dependent, not data-dependent).
+        foreach handle {model clt win page proj sess} {
             catch {${handle} ReleaseHandle}
         }
+        catch {hwi CloseStack}
+        hwi OpenStack
+        hwi GetSessionHandle sess
+        sess GetProjectHandle proj
+        proj GetPageHandle page [proj GetActivePage]
         DebugLog "Window $winIdx: handles released"
         catch {page SetActiveWindow $winIdx}
         DebugLog "Window $winIdx: SetActiveWindow done"
