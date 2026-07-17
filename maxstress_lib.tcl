@@ -417,7 +417,7 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         # per-handle ReleaseHandle doesn't fully clear, crashing HW 2025.1
         # partway through (observed: always window 3, regardless of which
         # result file is there — position-dependent, not data-dependent).
-        foreach handle {model clt win page proj sess} {
+        foreach handle {rctrl model clt win page proj sess} {
             catch {${handle} ReleaseHandle}
         }
         catch {hwi CloseStack}
@@ -500,6 +500,36 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         if {$_resChk eq ""} {
             puts "  WARNING: no results attached — export will find no subcases in this window"
         }
+        # GetResultFileName reporting a path only proves the REFERENCE
+        # was registered — live 2025.1 run showed the loadcases still
+        # weren't available afterwards (window stuck on "Model Step").
+        # 2025.1 loads result data asynchronously ("Upfront Data
+        # Loading"), so block until done, then read back the ACTUAL
+        # subcase count, and activate the first real subcase so the
+        # window leaves the geometry-only "Model Step" state.
+        DebugLog "Window $winIdx: calling clt WaitForResults"
+        catch {clt WaitForResults}
+        set _scList {}
+        catch {
+            model GetResultCtrlHandle rctrl
+            set _scList [rctrl GetSubcaseList model]
+        }
+        DebugLog "Window $winIdx: subcase count after load = [llength $_scList] ($_scList)"
+        if {[llength $_scList] == 0} {
+            puts "  WARNING: 0 loadcases available — result DATA did not load (reference only)"
+        } else {
+            puts "  [llength $_scList] loadcase(s) available"
+            catch {
+                rctrl SetCurrentSubcase [lindex $_scList 0]
+                rctrl SetCurrentSimulation 0
+            }
+            catch {
+                page GetAnimatorHandle _anim
+                catch {_anim SetCurrentStep 0}
+                _anim ReleaseHandle
+            }
+        }
+        catch {rctrl ReleaseHandle}
         if {[dict size $inpSets] > 0} {
             DebugLog "Window $winIdx: creating [dict size $inpSets] node set(s) from .inp"
             CreateNodeSets $inpSets
