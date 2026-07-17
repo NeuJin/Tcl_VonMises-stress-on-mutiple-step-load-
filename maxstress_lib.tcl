@@ -247,6 +247,38 @@ proc ::MaxStress::CreateNodeSets {inpSets} {
     return $made
 }
 
+# List the CURRENT model's selection sets as a flat {id label ...}
+# table (also printed for diagnostics). Same shape as SafetyFactor's.
+proc ::MaxStress::ListSets {} {
+    set out {}
+    catch {
+        foreach sid [model GetSelectionSetList] {
+            model GetSelectionSetHandle _msls $sid
+            set lbl [_msls GetLabel]
+            set sz  ""
+            catch {set sz [_msls GetSize]}
+            _msls ReleaseHandle
+            puts "    set id $sid -> '$lbl' (size $sz)"
+            lappend out $sid $lbl
+        }
+    }
+    return $out
+}
+
+# Resolve user input (a real ID or a set NAME) against a ListSets table.
+# Returns the real ID, or "" if no match. Needed since the direct-ODB
+# load: set IDs now depend on how many solver-written sets the ODB
+# carries, so the stable way to address a set is its NSET name.
+proc ::MaxStress::ResolveSet {input setTable} {
+    foreach {sid lbl} $setTable {
+        if {$sid eq $input} { return $sid }
+    }
+    foreach {sid lbl} $setTable {
+        if {[string equal -nocase $lbl $input]} { return $sid }
+    }
+    return ""
+}
+
 # Reset the whole session (File > New equivalent) — clears every window,
 # model and result. Run this before Load All when swapping result sets;
 # reloading into non-empty windows can hang on a hidden confirm dialog.
@@ -559,6 +591,26 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
     puts "===================================================="
     puts " Window $winID"
     puts "===================================================="
+
+    # Resolve each requested set (ID or NAME) against THIS window's
+    # model. With the direct-ODB load, numeric IDs shift depending on
+    # how many solver-written sets the ODB carries — so unresolvable
+    # tokens are warned + skipped per window rather than killing the
+    # whole window's rows.
+    set _setTable [ListSets]
+    set _resolved {}
+    foreach _tok $selectionSets {
+        set _rid [ResolveSet $_tok $_setTable]
+        if {$_rid eq ""} {
+            puts "  WARNING window $winID: no set matching '$_tok' (see list above) — skipped"
+        } else {
+            lappend _resolved $_rid
+        }
+    }
+    if {[llength $_resolved] == 0} {
+        error "none of the requested sets ($selectionSets) exist in window $winID's model"
+    }
+    set selectionSets $_resolved
 
     model GetResultCtrlHandle rctrl
     set subcases [rctrl GetSubcaseList model]
@@ -1086,6 +1138,12 @@ proc ::MaxStress::CaptureWindowImage {pageHandle winIdx setID csvRows outDir} {
     win GetClientHandle clt
     clt GetModelHandle model [clt GetActiveModel]
 
+    set _rid [ResolveSet $setID [ListSets]]
+    if {$_rid eq ""} {
+        puts "  skip win $winIdx: no selection set matching '$setID'"
+        return
+    }
+    set setID $_rid
     if {[catch {model GetSelectionSetHandle setc $setID} err]} {
         puts "  skip win $winIdx: no selection set $setID ($err)"
         return
@@ -1184,7 +1242,13 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
     puts ""
     puts "===== Window $winIdx ====="
 
-    # Resolve set ID -> set name (CSV stores names, not IDs)
+    # Resolve set (ID or NAME) -> set name (CSV stores names, not IDs)
+    set _rid [ResolveSet $setID [ListSets]]
+    if {$_rid eq ""} {
+        puts "  skip: this window's model has no selection set matching '$setID'"
+        return
+    }
+    set setID $_rid
     if {[catch {model GetSelectionSetHandle setc $setID} err]} {
         puts "  skip: this window's model has no selection set $setID ($err)"
         return

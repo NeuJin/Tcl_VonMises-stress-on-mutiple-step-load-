@@ -686,7 +686,7 @@ proc ::HVTools::BuildToolTab {tab kind} {
 
     # ── Export ──
     labelframe $tab.exp -text " 1. Export (all windows) " -padx 8 -pady 6
-    label  $tab.exp.lbl -text "Selection set IDs (space-separated):"
+    label  $tab.exp.lbl -text "Selection set IDs or names (space-separated):"
     entry  $tab.exp.ids -width 26
     button $tab.exp.run -text "Run Export" -width 12 \
         -command [expr {$kind eq "ms" ? "::HVTools::MSExport" : "::HVTools::SFExport"}]
@@ -698,7 +698,7 @@ proc ::HVTools::BuildToolTab {tab kind} {
 
     # ── Annotate ──
     labelframe $tab.ann -text " 2. Annotate (from CSV) " -padx 8 -pady 6
-    label  $tab.ann.lbl -text "One selection set ID:"
+    label  $tab.ann.lbl -text "One selection set ID or name:"
     entry  $tab.ann.id -width 12
     button $tab.ann.run -text "Annotate" -width 12 \
         -command [expr {$kind eq "ms" ? "::HVTools::MSAnnotate" : "::HVTools::SFAnnotate"}]
