@@ -293,14 +293,31 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         }
         DebugLog "Window $winIdx: old models cleared"
 
-        # HV14-confirmed load pattern: AddModel geometry, then attach results
-        DebugLog "Window $winIdx: calling clt AddModel $modelFile"
-        clt AddModel $modelFile
+        # ⚠️ 2026-07-16, HW 2025.1: the old two-step pattern (AddModel the
+        # shared .inp geometry, then `model SetResult $rf` to attach each
+        # window's own result file) crashes HW natively — confirmed via
+        # DebugLog + live testing to be the SetResult call specifically,
+        # reproduced identically via pure manual GUI "Load Results" (no TCL
+        # at all), always within the first few uses regardless of how many
+        # models/windows already exist. The user's .odb files are confirmed
+        # self-contained (full geometry + results in one file — Abaqus ODB
+        # "Case A" per HV14/2022/2024 reference), so AddModel can load $rf
+        # directly, skipping SetResult (and $modelFile) entirely. This
+        # avoids the buggy code path outright rather than working around it.
+        DebugLog "Window $winIdx: calling clt AddModel $rf (direct, self-contained ODB)"
+        clt AddModel $rf
         DebugLog "Window $winIdx: AddModel returned OK"
         clt GetModelHandle model [clt GetActiveModel]
-        DebugLog "Window $winIdx: GetModelHandle done, calling model SetResult $rf"
-        model SetResult $rf
-        DebugLog "Window $winIdx: SetResult returned OK, calling clt Draw"
+        # Sanity check: direct ODB load should have attached results too.
+        # If it somehow loaded geometry only, warn NOW instead of letting
+        # Export silently produce 0 rows later.
+        set _resChk ""
+        catch {set _resChk [model GetResultFileName]}
+        DebugLog "Window $winIdx: GetResultFileName -> '$_resChk'"
+        if {$_resChk eq ""} {
+            puts "  WARNING: no results attached after direct ODB load — export will find no subcases"
+        }
+        DebugLog "Window $winIdx: calling clt Draw"
         clt Draw
         DebugLog "Window $winIdx: Draw returned OK"
         win ReleaseHandle
