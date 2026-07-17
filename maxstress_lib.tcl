@@ -474,14 +474,31 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         clt AddModel $rf
         DebugLog "Window $winIdx: AddModel returned OK"
         clt GetModelHandle model [clt GetActiveModel]
-        # Sanity check: direct ODB load should have attached results too.
-        # If it somehow loaded geometry only, warn NOW instead of letting
-        # Export silently produce 0 rows later.
+        # ⚠️ Live 2025.1 finding: AddModel alone loads GEOMETRY ONLY here
+        # (window title stayed "N/A : Model Step", export found no
+        # subcases, CSV came out empty) — despite the HV14 "Case A" doc
+        # saying a self-contained ODB loads results too, and despite the
+        # GUI's combined Model+Results load working fine 8/8. So attach
+        # the same ODB's results explicitly — via AddResult (the
+        # multi-result attach API), NOT SetResult (the replace-result
+        # API whose code path natively crashes 2025.1, see above).
         set _resChk ""
         catch {set _resChk [model GetResultFileName]}
-        DebugLog "Window $winIdx: GetResultFileName -> '$_resChk'"
+        DebugLog "Window $winIdx: GetResultFileName after AddModel -> '$_resChk'"
         if {$_resChk eq ""} {
-            puts "  WARNING: no results attached after direct ODB load — export will find no subcases"
+            DebugLog "Window $winIdx: calling model AddResult $rf"
+            if {[catch {model AddResult $rf} _arerr]} {
+                DebugLog "Window $winIdx: AddResult FAILED - $_arerr"
+                puts "  WARNING: AddResult failed: $_arerr"
+            } else {
+                DebugLog "Window $winIdx: AddResult returned OK"
+            }
+            set _resChk ""
+            catch {set _resChk [model GetResultFileName]}
+            DebugLog "Window $winIdx: GetResultFileName after AddResult -> '$_resChk'"
+        }
+        if {$_resChk eq ""} {
+            puts "  WARNING: no results attached — export will find no subcases in this window"
         }
         if {[dict size $inpSets] > 0} {
             DebugLog "Window $winIdx: creating [dict size $inpSets] node set(s) from .inp"
