@@ -125,9 +125,127 @@ proc ::MaxStress::DebugLog {msg} {
 }
 
 # ─────────────────────────────────────────────────────────────────────
-# LOAD — set page layout, then load the SAME model file into every
-# window with a DIFFERENT result file per window.
+# LOAD — set page layout, then load each window's own self-contained
+# ODB directly. The .inp model file is NO LONGER loaded into HV (its
+# separate attach-results step crashes 2025.1) — instead it is parsed
+# as plain text for its *NSET blocks, and those node sets are
+# recreated as HV selection sets in every window. This keeps the
+# user's workflow: edit the .inp text to add a query region, reload —
+# no solver re-run, no manual node picking, and no SetResult call.
 # ─────────────────────────────────────────────────────────────────────
+
+# Parse every *NSET block out of an Abaqus .inp (plain text). Returns
+# a dict: set name -> flat list of node ids. Handles both explicit
+# comma-separated id lists (wrapped over any number of lines) and the
+# GENERATE form (first, last, increment). Skips ** comment lines.
+# A data token that isn't a number but matches an earlier set name is
+# treated as a set reference and merged (Abaqus allows nested NSETs).
+proc ::MaxStress::ParseInpNodeSets {inpFile} {
+    set sets [dict create]
+    set fh [open $inpFile r]
+    set cur ""
+    set gen 0
+    while {[gets $fh line] >= 0} {
+        set t [string trim $line]
+        if {$t eq "" || [string range $t 0 1] eq "**"} { continue }
+        if {[string index $t 0] eq "*"} {
+            set cur ""
+            set gen 0
+            set parts [split $t ,]
+            set kw [string toupper [string trim [lindex $parts 0]]]
+            if {$kw eq "*NSET"} {
+                foreach p [lrange $parts 1 end] {
+                    set p [string trim $p]
+                    if {[string match -nocase "NSET=*" $p]} {
+                        set cur [string trim [string range $p 5 end] { \"'}]
+                    } elseif {[string equal -nocase "GENERATE" $p]} {
+                        set gen 1
+                    }
+                }
+                if {$cur ne "" && ![dict exists $sets $cur]} {
+                    dict set sets $cur {}
+                }
+            }
+            continue
+        }
+        if {$cur eq ""} { continue }
+        set ids [dict get $sets $cur]
+        if {$gen} {
+            set f "" ; set l "" ; set inc 1
+            set vals {}
+            foreach x [split $t ,] {
+                set x [string trim $x]
+                if {$x ne ""} { lappend vals $x }
+            }
+            lassign $vals f l inc
+            if {$inc eq "" || $inc == 0} { set inc 1 }
+            if {[string is integer -strict $f] && [string is integer -strict $l]} {
+                for {set n $f} {$n <= $l} {incr n $inc} { lappend ids $n }
+            }
+        } else {
+            foreach x [split $t ,] {
+                set x [string trim $x]
+                if {$x eq ""} { continue }
+                if {[string is integer -strict $x]} {
+                    lappend ids $x
+                } elseif {[dict exists $sets $x]} {
+                    lappend ids {*}[dict get $sets $x]
+                }
+            }
+        }
+        dict set sets $cur $ids
+    }
+    close $fh
+    return $sets
+}
+
+# Recreate parsed .inp node sets as HV node selection sets on the
+# CURRENT `model` handle. Skips names the model already has (ODBs
+# carry a few solver-written sets; also makes LoadAll re-runnable
+# without duplicates). Verifies each set via GetSize readback — a
+# size of 0 with a non-empty id list means the ids didn't resolve in
+# this model (wrong pool/instance ids) and is logged as a warning.
+proc ::MaxStress::CreateNodeSets {inpSets} {
+    set existing {}
+    catch {
+        foreach sid [model GetSelectionSetList] {
+            catch {
+                model GetSelectionSetHandle _exsh $sid
+                lappend existing [_exsh GetLabel]
+                _exsh ReleaseHandle
+            }
+        }
+    }
+    set made 0
+    dict for {name ids} $inpSets {
+        if {[llength $ids] == 0} { continue }
+        if {[lsearch -exact $existing $name] >= 0} {
+            puts "    set '$name': already in model — kept as-is"
+            continue
+        }
+        if {[catch {
+            set _nid [model AddSelectionSet node]
+            model GetSelectionSetHandle _nsh $_nid
+            _nsh SetLabel $name
+            foreach n $ids {
+                catch {_nsh Add "id == $n"}
+            }
+            set _sz [_nsh GetSize]
+            _nsh ReleaseHandle
+            if {$_sz == 0} {
+                puts "    WARNING: set '$name' resolved 0/[llength $ids] nodes — ids may not match this model"
+            } else {
+                puts "    set '$name': $_sz/[llength $ids] nodes"
+            }
+            DebugLog "  set '$name' created: $_sz/[llength $ids] nodes"
+            incr made
+        } _serr]} {
+            puts "    WARNING: creating set '$name' failed: $_serr"
+            DebugLog "  set '$name' FAILED: $_serr"
+        }
+    }
+    return $made
+}
 
 # Reset the whole session (File > New equivalent) — clears every window,
 # model and result. Run this before Load All when swapping result sets;
@@ -231,6 +349,22 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
     puts "--- Page has $numWindows window(s); loading [llength $resultFiles] result file(s) ---"
     DebugLog "LoadAll: $numWindows window(s), [llength $resultFiles] result file(s), model=$modelFile"
 
+    # Node sets come from the .inp as TEXT (parsed once, recreated in
+    # every window) — the .inp itself is never loaded into HV on this
+    # path. See the section comment above for why (2025.1 SetResult
+    # crash).
+    set inpSets [dict create]
+    if {[string match -nocase "*.inp" $modelFile]} {
+        if {[catch {set inpSets [ParseInpNodeSets $modelFile]} _perr]} {
+            puts "WARNING: could not parse node sets from $modelFile — $_perr"
+            DebugLog "ParseInpNodeSets FAILED: $_perr"
+        } else {
+            set _names [dict keys $inpSets]
+            puts "  parsed [llength $_names] node set(s) from .inp: $_names"
+            DebugLog "ParseInpNodeSets: [llength $_names] set(s): $_names"
+        }
+    }
+
     set winIdx 1
     foreach rf $resultFiles {
         if {$winIdx > $numWindows} {
@@ -316,6 +450,10 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         DebugLog "Window $winIdx: GetResultFileName -> '$_resChk'"
         if {$_resChk eq ""} {
             puts "  WARNING: no results attached after direct ODB load — export will find no subcases"
+        }
+        if {[dict size $inpSets] > 0} {
+            DebugLog "Window $winIdx: creating [dict size $inpSets] node set(s) from .inp"
+            CreateNodeSets $inpSets
         }
         DebugLog "Window $winIdx: calling clt Draw"
         clt Draw
