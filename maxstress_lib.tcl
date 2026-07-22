@@ -124,6 +124,30 @@ proc ::MaxStress::DebugLog {msg} {
     }
 }
 
+# ⚠️ 2026-07-16, HW 2025.1: right after a direct-ODB AddResult +
+# WaitForResults, `rctrl SetCurrentSubcase` can fail with "Cannot Set
+# the Current Subcase or Step as Scaling is not complete. Please
+# re-apply." (Message Center) — an async post-load computation
+# (likely deformation/contour scale ranges) that WaitForResults
+# apparently doesn't cover. The message's own wording ("re-apply")
+# implies the fix is to retry once it settles, not a different call —
+# so retry with a short wait instead of failing outright. Assumes the
+# caller already has `rctrl` (GetResultCtrlHandle) grabbed.
+proc ::MaxStress::SetSubcaseWithRetry {sc simIdx {maxTries 15} {waitMs 400}} {
+    set lastErr ""
+    for {set i 0} {$i < $maxTries} {incr i} {
+        if {![catch {rctrl SetCurrentSubcase $sc} lastErr]} {
+            catch {rctrl SetCurrentSimulation $simIdx}
+            if {$i > 0} { DebugLog "SetSubcaseWithRetry: sc=$sc succeeded after $i retr(y/ies)" }
+            return 1
+        }
+        after $waitMs
+        catch {update}
+    }
+    DebugLog "SetSubcaseWithRetry: sc=$sc FAILED after $maxTries tries: $lastErr"
+    error "SetCurrentSubcase $sc failed after $maxTries tries ($waitMs ms apart): $lastErr"
+}
+
 # ─────────────────────────────────────────────────────────────────────
 # LOAD — set page layout, then load each window's own self-contained
 # ODB directly. The .inp model file is NO LONGER loaded into HV (its
@@ -519,10 +543,7 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
             puts "  WARNING: 0 loadcases available — result DATA did not load (reference only)"
         } else {
             puts "  [llength $_scList] loadcase(s) available"
-            catch {
-                rctrl SetCurrentSubcase [lindex $_scList 0]
-                rctrl SetCurrentSimulation 0
-            }
+            catch {SetSubcaseWithRetry [lindex $_scList 0] 0}
             catch {
                 page GetAnimatorHandle _anim
                 catch {_anim SetCurrentStep 0}
@@ -770,8 +791,7 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
         update
         after 40
 
-        rctrl SetCurrentSubcase $sc
-        rctrl SetCurrentSimulation $simIdx
+        SetSubcaseWithRetry $sc $simIdx
 
         set simLabel $scLabel
 
@@ -1015,8 +1035,7 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
     set simIdx 1
     if {[llength $simList] <= 1} { set simIdx 0 }
 
-    rctrl SetCurrentSubcase $targetSC
-    rctrl SetCurrentSimulation $simIdx
+    SetSubcaseWithRetry $targetSC $simIdx
 
     # Contour must be the stress contour for contour.value to resolve
     rctrl GetContourCtrlHandle con
@@ -1353,12 +1372,13 @@ proc ::MaxStress::annotateWindow {pageHandle winIdx setID csvRows pink meaSize n
         }
     }
     if {$targetSC ne ""} {
-        rctrl SetCurrentSubcase $targetSC
-        # The export swept simulation 1 of each subcase (AppendSimulation
-        # $sc 1) — jump to the same one; fall back to 0 for 1-sim subcases.
-        if {[catch {rctrl SetCurrentSimulation 1}]} {
-            catch {rctrl SetCurrentSimulation 0}
-        }
+        # The export sweeps simulation index 1 of each subcase (falling
+        # back to 0 for 1-sim subcases) — jump to the same one.
+        set _simList {}
+        catch {set _simList [rctrl GetSimulationList $targetSC]}
+        set _simPick 1
+        if {[llength $_simList] <= 1} { set _simPick 0 }
+        SetSubcaseWithRetry $targetSC $_simPick
         set simShow ""
         catch {set simShow [rctrl GetCurrentSimulation]}
         # Sync the animator — SetCurrentSimulation alone moves the data
