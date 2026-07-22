@@ -662,11 +662,33 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
     model GetResultCtrlHandle rctrl
     set subcases [rctrl GetSubcaseList model]
     set numSubcases [llength $subcases]
-    set derivedSubcaseID [expr {$numSubcases + 1}]
     set derivedCaseName "Derived_Case_Win${winID}"
 
     rctrl AddSubcase $derivedCaseName
+
+    # ⚠️ derivedSubcaseID used to be a guess (numSubcases+1) — confirmed
+    # WRONG on 2025.1's direct-ODB-loaded model (AddSubcase does not
+    # necessarily assign the next integer id): GetSubcaseHandle on the
+    # guessed id silently failed to create "sub" (no error raised), so
+    # every later `sub AppendSimulation` threw "invalid command name
+    # sub" for every frame. Read the subcase list back AFTER AddSubcase
+    # and take the one id that wasn't there before — the real,
+    # confirmed id, whatever numbering scheme this model actually uses.
+    set subcasesAfter [rctrl GetSubcaseList model]
+    set newIDs {}
+    foreach sc $subcasesAfter {
+        if {[lsearch -exact $subcases $sc] < 0} { lappend newIDs $sc }
+    }
+    if {[llength $newIDs] != 1} {
+        error "AddSubcase '$derivedCaseName' did not yield exactly one new subcase id (got: $newIDs) — before=$subcases after=$subcasesAfter"
+    }
+    set derivedSubcaseID [lindex $newIDs 0]
+    DebugLog "Window $winID: derived subcase '$derivedCaseName' real id=$derivedSubcaseID (old guess would have been [expr {$numSubcases+1}])"
+
     rctrl GetSubcaseHandle sub $derivedSubcaseID
+    if {[llength [info commands sub]] == 0} {
+        error "GetSubcaseHandle silently failed to create 'sub' for id $derivedSubcaseID — cannot append frames"
+    }
 
     # Iterate the REAL subcase IDs — not 0..N-1 (IDs aren't 0-based).
     foreach sc $subcases {
