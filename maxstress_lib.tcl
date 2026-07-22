@@ -661,52 +661,42 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
 
     model GetResultCtrlHandle rctrl
     set subcases [rctrl GetSubcaseList model]
-    set numSubcases [llength $subcases]
-    set derivedCaseName "Derived_Case_Win${winID}"
 
-    rctrl AddSubcase $derivedCaseName
-
-    # ⚠️ derivedSubcaseID used to be a guess (numSubcases+1) — confirmed
-    # WRONG on 2025.1's direct-ODB-loaded model (AddSubcase does not
-    # necessarily assign the next integer id): GetSubcaseHandle on the
-    # guessed id silently failed to create "sub" (no error raised), so
-    # every later `sub AppendSimulation` threw "invalid command name
-    # sub" for every frame. Read the subcase list back AFTER AddSubcase
-    # and take the one id that wasn't there before — the real,
-    # confirmed id, whatever numbering scheme this model actually uses.
-    set subcasesAfter [rctrl GetSubcaseList model]
-    set newIDs {}
-    foreach sc $subcasesAfter {
-        if {[lsearch -exact $subcases $sc] < 0} { lappend newIDs $sc }
-    }
-    if {[llength $newIDs] != 1} {
-        error "AddSubcase '$derivedCaseName' did not yield exactly one new subcase id (got: $newIDs) — before=$subcases after=$subcasesAfter"
-    }
-    set derivedSubcaseID [lindex $newIDs 0]
-    DebugLog "Window $winID: derived subcase '$derivedCaseName' real id=$derivedSubcaseID (old guess would have been [expr {$numSubcases+1}])"
-
-    rctrl GetSubcaseHandle sub $derivedSubcaseID
-    if {[llength [info commands sub]] == 0} {
-        error "GetSubcaseHandle silently failed to create 'sub' for id $derivedSubcaseID — cannot append frames"
-    }
-
-    # Iterate the REAL subcase IDs — not 0..N-1 (IDs aren't 0-based).
+    # ⚠️ 2026-07-16, HW 2025.1: the old design created one "Derived Case"
+    # per window (rctrl AddSubcase) and appended sim index 1 of every
+    # qualifying real subcase into it (sub AppendSimulation $sc 1), so
+    # the sweep loop only had to walk ONE flat frame list. On a
+    # direct-ODB-loaded model, AddSubcase silently creates nothing
+    # (before/after subcase lists identical) and the Message Center
+    # shows "DSubController: No reference to derived subcase extension"
+    # — the derived-subcase feature isn't available on this load path.
+    # Rather than chase that extension, this sweeps the REAL subcases
+    # directly: one frame per qualifying subcase, at sim index 1
+    # (falling back to 0 for single-frame subcases) — functionally
+    # identical to what AppendSimulation $sc 1 selected, no derived
+    # case involved. The angle lives on the SUBCASE's own label (e.g.
+    # "Step10_Combustion/Angle_1454.99deg"), not per-frame, so scLabel
+    # is exactly what maxSimLabel needs to be for ExtractAngle/
+    # AngleMatches downstream (annotateWindow, QueryNodeValue).
+    set frames {}
     foreach sc $subcases {
-        # Skip other windows' Derived_Case* (can't derive from derived)
-        # and *Bolt* steps (not crank-angle frames).
         set scLabel [rctrl GetSubcaseLabel $sc]
         set skip 0
         foreach pat $skipPatterns {
             if {[string match $pat $scLabel]} { set skip 1 ; break }
         }
         if {$skip} { continue }
-        if {[catch {sub AppendSimulation $sc 1} err]} {
-            puts "  WARNING window $winID: could not append subcase $sc ($scLabel) into $derivedCaseName: $err"
-        }
+        set simList {}
+        catch {set simList [rctrl GetSimulationList $sc]}
+        set simIdx 1
+        if {[llength $simList] <= 1} { set simIdx 0 }
+        lappend frames [list $sc $scLabel $simIdx]
     }
-    sub ReleaseHandle
-
-    puts "--- Derived Case '$derivedCaseName' created ---"
+    set numFrames [llength $frames]
+    puts "Frames to sweep (1 per qualifying subcase, no derived case): $numFrames"
+    if {$numFrames == 0} {
+        error "no qualifying subcases in window $winID (all matched skip patterns, or model has none)"
+    }
 
     rctrl GetContourCtrlHandle con
     con GetLegendHandle leg
@@ -733,17 +723,8 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
     # later (Fmt: CSV write still uses raw %.8f, note/report/table use Fmt).
     leg SetNumericPrecision 8
 
-    # Frame count = what was ACTUALLY appended (not ID arithmetic, which
-    # inflates when windows share a model).
-    set derivedSimList [rctrl GetDerivedSimulationList $derivedSubcaseID]
-    set numFrames [llength $derivedSimList]
-    set subLabel [rctrl GetSubcaseLabel $derivedSubcaseID]
-    puts "Subcase name:                     $subLabel"
-    puts "Total frames in derived subcase:  $numFrames"
-
     query SetDataSourceProperty result "Model ID" 1
     query SetDataSourceProperty result "Result Type" $DATATYPE
-    query SetDataSourceProperty result "Load Case" $derivedCaseName
     query SetDataSourceProperty result "Component" $DATACOMP
     query SetDataSourceProperty result corners true
     query SetDataSourceProperty result complex real
@@ -778,7 +759,10 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
     pack .status.l -pady 5
     pack .status.p -padx 10 -pady 8
 
-    for {set frameIdx 1} {$frameIdx <= $numFrames} {incr frameIdx} {
+    set frameIdx 0
+    foreach f $frames {
+        lassign $f sc scLabel simIdx
+        incr frameIdx
 
         set pct [expr {int(100.0*$frameIdx/$numFrames)}]
         .status.l configure -text "Window $winID — Frame $frameIdx ($pct%)"
@@ -786,14 +770,14 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
         update
         after 40
 
-        set frameIdx1 [expr {$frameIdx - 1}]
-        rctrl SetCurrentSubcase $derivedSubcaseID
-        rctrl SetCurrentSimulation $frameIdx1
+        rctrl SetCurrentSubcase $sc
+        rctrl SetCurrentSimulation $simIdx
 
-        set simLabel [lindex $derivedSimList $frameIdx1]
+        set simLabel $scLabel
 
         foreach setID $selectionSets {
-            query SetDataSourceProperty result "Simulation Step" $frameIdx1
+            query SetDataSourceProperty result "Load Case" $scLabel
+            query SetDataSourceProperty result "Simulation Step" $simIdx
             query SetSelectionSet $setID
             query SetQuery "node.id contour.value"
             query GetQuery
@@ -808,7 +792,7 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
                     set maxStress($setID) $stressVal
                     set maxNodeID($setID) $nodeID
                     set maxSimLabel($setID) $simLabel
-                    set maxSimID($setID) $frameIdx1
+                    set maxSimID($setID) $sc
                 }
             }
             iter ReleaseHandle
@@ -977,8 +961,9 @@ proc ::MaxStress::RunExport {selectionSets {outputDir ""}} {
 
 # ─────────────────────────────────────────────────────────────────────
 # RE-QUERY — contour value for ONE node at ONE crank angle in ONE window
-# (used by the panel's editable results table). Requires the
-# Derived_Case_Win<idx> from the export to still exist (same session).
+# (used by the panel's editable results table). Matches the angle
+# against the model's real subcase labels directly (no derived case
+# involved — same lookup style as annotateWindow).
 # Returns {stressValue simIdx simLabel angleString}.
 # ─────────────────────────────────────────────────────────────────────
 
@@ -995,38 +980,42 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
     clt GetModelHandle model $modelID
     model GetResultCtrlHandle rctrl
 
-    # Locate this window's derived case from the export run
-    set derivedID ""
+    # ⚠️ 2026-07-16, HW 2025.1: was "locate this window's derived case
+    # (Derived_Case_Win<idx>) from the export run, then match angle
+    # against its per-frame labels" — no derived case exists anymore
+    # (see processWindow's comment: AddSubcase silently creates nothing
+    # on a direct-ODB-loaded model here). The angle lives on the REAL
+    # subcase's own label, so match directly against real subcases
+    # instead — same approach annotateWindow already uses.
+    set targetSC "" ; set simLabel ""
     foreach sc [rctrl GetSubcaseList model] {
-        if {[rctrl GetSubcaseLabel $sc] eq "Derived_Case_Win${winIdx}"} {
-            set derivedID $sc
-        }
-    }
-    if {$derivedID eq ""} {
-        catch {hwi CloseStack}
-        error "Derived_Case_Win${winIdx} not found — run Export first (same session)"
-    }
-
-    # Angle -> simulation index (tolerant match on the numeric part)
-    set simList [rctrl GetDerivedSimulationList $derivedID]
-    set simIdx -1 ; set simLabel ""
-    set i 0
-    foreach lbl $simList {
+        set lbl [rctrl GetSubcaseLabel $sc]
+        if {[string match "Derived_Case*" $lbl]} { continue }
         if {[AngleMatches [ExtractAngle $lbl] $angle]} {
-            set simIdx $i
+            set targetSC $sc
             set simLabel $lbl
             break
         }
-        incr i
     }
-    if {$simIdx < 0} {
+    if {$targetSC eq ""} {
         set avail {}
-        foreach lbl $simList { lappend avail [ExtractAngle $lbl] }
+        foreach sc [rctrl GetSubcaseList model] {
+            set lbl [rctrl GetSubcaseLabel $sc]
+            if {[string match "Derived_Case*" $lbl]} { continue }
+            lappend avail [ExtractAngle $lbl]
+        }
         catch {hwi CloseStack}
         error "angle '$angle' not found in window $winIdx — available: $avail"
     }
 
-    rctrl SetCurrentSubcase $derivedID
+    # Same sim-index convention as the sweep: index 1, falling back to
+    # 0 for single-frame subcases.
+    set simList {}
+    catch {set simList [rctrl GetSimulationList $targetSC]}
+    set simIdx 1
+    if {[llength $simList] <= 1} { set simIdx 0 }
+
+    rctrl SetCurrentSubcase $targetSC
     rctrl SetCurrentSimulation $simIdx
 
     # Contour must be the stress contour for contour.value to resolve
@@ -1064,7 +1053,7 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
     query SetDataSourceProperty result "Model ID" $modelID
     query SetDataSourceProperty result "Result Type" $DATATYPE
     query SetDataSourceProperty result "Component" $DATACOMP
-    query SetDataSourceProperty result "Load Case" "Derived_Case_Win${winIdx}"
+    query SetDataSourceProperty result "Load Case" $simLabel
     query SetDataSourceProperty result corners true
     query SetDataSourceProperty result complex real
     query SetDataSourceProperty result complex_format real
