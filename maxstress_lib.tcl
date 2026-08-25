@@ -483,44 +483,46 @@ proc ::MaxStress::LoadAll {modelFile resultFiles cols rows} {
         }
         DebugLog "Window $winIdx: old models cleared"
 
-        # ⚠️ 2026-07-16, HW 2025.1: the old two-step pattern (AddModel the
-        # shared .inp geometry, then `model SetResult $rf` to attach each
-        # window's own result file) crashes HW natively — confirmed via
-        # DebugLog + live testing to be the SetResult call specifically,
-        # reproduced identically via pure manual GUI "Load Results" (no TCL
-        # at all), always within the first few uses regardless of how many
-        # models/windows already exist. The user's .odb files are confirmed
-        # self-contained (full geometry + results in one file — Abaqus ODB
-        # "Case A" per HV14/2022/2024 reference), so AddModel can load $rf
-        # directly, skipping SetResult (and $modelFile) entirely. This
-        # avoids the buggy code path outright rather than working around it.
-        DebugLog "Window $winIdx: calling clt AddModel $rf (direct, self-contained ODB)"
-        clt AddModel $rf
+        # ⚠️ 2026-07-16, HW 2025.1, BRANCH compat/hv2025.1-lite-inp: the
+        # classic two-step pattern (AddModel the shared .inp geometry, then
+        # `model SetResult $rf` to attach each window's own result file)
+        # crashed HW natively when $modelFile was the FULL 3D solid-element
+        # model — confirmed via DebugLog + live testing to be the SetResult
+        # call specifically, reproduced identically via pure manual GUI
+        # "Load Results" (no TCL at all). The compat/hv2025.1 branch worked
+        # around this by loading each window's self-contained ODB directly
+        # and skipping $modelFile/SetResult entirely — but that meant
+        # per-window node-set IDs become UNSTABLE (each ODB may carry a
+        # different number of solver-native sets ahead of the recreated
+        # ones), so numeric set IDs stopped being safe to use across
+        # windows (names still work fine).
+        #
+        # This branch instead uses a $modelFile trimmed down to shell-only
+        # geometry (just enough for node identity + the *NSET blocks — no
+        # full 3D solid mesh) — confirmed by hand that the classic
+        # AddModel(.inp) + SetResult(.odb) sequence does NOT crash with
+        # this lighter model. That restores: (a) numeric set IDs being
+        # stable again (one shared model, native *NSET loading, same
+        # ordering every window), (b) letting HyperView's own .inp reader
+        # create the node sets natively instead of the text-parse-and-
+        # recreate workaround. ParseInpNodeSets/CreateNodeSets are kept
+        # running below as a safety net only (they skip any set name
+        # already present in the model, so this is a harmless no-op if
+        # native loading already created everything).
+        DebugLog "Window $winIdx: calling clt AddModel $modelFile (lite shell-only .inp)"
+        clt AddModel $modelFile
         DebugLog "Window $winIdx: AddModel returned OK"
         clt GetModelHandle model [clt GetActiveModel]
-        # ⚠️ Live 2025.1 finding: AddModel alone loads GEOMETRY ONLY here
-        # (window title stayed "N/A : Model Step", export found no
-        # subcases, CSV came out empty) — despite the HV14 "Case A" doc
-        # saying a self-contained ODB loads results too, and despite the
-        # GUI's combined Model+Results load working fine 8/8. So attach
-        # the same ODB's results explicitly — via AddResult (the
-        # multi-result attach API), NOT SetResult (the replace-result
-        # API whose code path natively crashes 2025.1, see above).
+        DebugLog "Window $winIdx: calling model SetResult $rf"
         set _resChk ""
-        catch {set _resChk [model GetResultFileName]}
-        DebugLog "Window $winIdx: GetResultFileName after AddModel -> '$_resChk'"
-        if {$_resChk eq ""} {
-            DebugLog "Window $winIdx: calling model AddResult $rf"
-            if {[catch {model AddResult $rf} _arerr]} {
-                DebugLog "Window $winIdx: AddResult FAILED - $_arerr"
-                puts "  WARNING: AddResult failed: $_arerr"
-            } else {
-                DebugLog "Window $winIdx: AddResult returned OK"
-            }
-            set _resChk ""
-            catch {set _resChk [model GetResultFileName]}
-            DebugLog "Window $winIdx: GetResultFileName after AddResult -> '$_resChk'"
+        if {[catch {model SetResult $rf} _srerr]} {
+            DebugLog "Window $winIdx: SetResult FAILED - $_srerr"
+            puts "  WARNING: SetResult failed: $_srerr"
+        } else {
+            DebugLog "Window $winIdx: SetResult returned OK"
         }
+        catch {set _resChk [model GetResultFileName]}
+        DebugLog "Window $winIdx: GetResultFileName after SetResult -> '$_resChk'"
         if {$_resChk eq ""} {
             puts "  WARNING: no results attached — export will find no subcases in this window"
         }
