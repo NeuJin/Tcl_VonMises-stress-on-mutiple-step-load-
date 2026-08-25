@@ -808,6 +808,15 @@ proc ::MaxStress::processWindow {pageHandle winID selectionSets skipPatterns sum
                 set data [iter GetDataList]
                 set nodeID [lindex $data 0]
                 set stressVal [lindex $data 1]
+                # ⚠️ 2026-07-16, HW 2025.1: some nodes come back with the
+                # literal string "N/A" instead of a number (no valid
+                # result at that node for this frame — e.g. nodes outside
+                # this subcase's output request) — comparing that with >
+                # throws "expected floating-point number but got N/A" and
+                # was killing the WHOLE window (caught by RunExport's
+                # per-window catch, so every other frame's real data was
+                # lost too). Skip just this one node/frame instead.
+                if {![string is double -strict $stressVal]} { continue }
                 if {$stressVal > $maxStress($setID)} {
                     set maxStress($setID) $stressVal
                     set maxNodeID($setID) $nodeID
