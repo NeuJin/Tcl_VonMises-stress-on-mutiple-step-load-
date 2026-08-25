@@ -1093,11 +1093,17 @@ proc ::MaxStress::QueryNodeValue {winIdx nodeID angle} {
     query SetQuery "node.id contour.value"
     query GetQuery
 
+    # ⚠️ Same "N/A" gotcha as processWindow's sweep (2026-07-16, HW
+    # 2025.1): a node with no valid result at this frame reads back the
+    # literal string "N/A", not empty — accepting it unguarded would
+    # silently report a fake "N/A" value as if it were real data instead
+    # of raising the "no contour value" error below.
     set val ""
     query GetIteratorHandle iter
     for {iter First} {[iter Valid]} {iter Next} {
         set data [iter GetDataList]
-        if {[lindex $data 1] ne ""} { set val [lindex $data 1] }
+        set _v [lindex $data 1]
+        if {$_v ne "" && [string is double -strict $_v]} { set val $_v }
     }
     iter ReleaseHandle
     catch {model RemoveSelectionSet $tid}
